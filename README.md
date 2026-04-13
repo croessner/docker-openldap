@@ -22,7 +22,7 @@ This project builds a complete OpenLDAP image on **Alpine Linux**, compiles **a 
 - [Init Scripts and LDIFs](#init-scripts-and-ldifs)
 - [Custom Schemas](#custom-schemas)
 - [Custom Config Snippets](#custom-config-snippets)
-- [Fully Custom `slapd.conf`](#fully-custom-slapdconf)
+- [Fully Custom Configuration](#fully-custom-configuration)
 - [One-Shot `slapd.d` Mode](#one-shot-slapdd-mode)
 - [Health Check](#health-check)
 - [Notes and Limitations](#notes-and-limitations)
@@ -217,7 +217,6 @@ On startup, the following happens:
    - Base entry for `LDAP_BASE_DN`
    - Optional admin entry
    - Optional `people` and `groups` OUs
-   - Optional accesslog base entry
    - Followed by processing `docker-entrypoint-initdb.d`
 5. If a persisted `slapd.d` tree is reused, env-driven bootstrap is skipped intentionally because the live `cn=config` tree may already differ from the current environment values.
 6. After that, `slapd` starts in the foreground and logs to the container output.
@@ -247,6 +246,7 @@ On startup, the following happens:
 | `LDAP_ADMIN_PASSWORD` | – | Admin password in plain text |
 | `LDAP_ADMIN_PASSWORD_FILE` | – | Password from file/secret |
 | `LDAP_ADMIN_PASSWORD_HASH` | – | Pre-hashed alternative to `LDAP_ADMIN_PASSWORD` for runtime authentication; first-start LDAP bootstrap still needs the plain password |
+| `LDAP_PASSWORD_HASH_SCHEME` | `{ARGON2}` | Scheme used when the container derives `LDAP_ADMIN_PASSWORD_HASH` from `LDAP_ADMIN_PASSWORD` |
 | `LDAP_ADMIN_DN` | `cn=<admin>,<baseDN>` | Full DN of the admin |
 
 ### Listener / Runtime
@@ -273,7 +273,6 @@ On startup, the following happens:
 | `LDAP_MDB_CHECKPOINT` | `1024 5` | `checkpoint` for `mdb` |
 | `LDAP_MDB_DBNOSYNC` | `false` | Optional `dbnosync` |
 | `LDAP_SKIP_DEFAULT_TREE` | `false` | Do not create the base tree automatically |
-| `LDAP_CREATE_ADMIN_ENTRY` | `true` | Also create a real admin entry |
 | `LDAP_CREATE_PEOPLE_OU` | `true` | Create `ou=people` |
 | `LDAP_CREATE_GROUPS_OU` | `true` | Create `ou=groups` |
 | `LDAP_PEOPLE_OU` | `people` | Name of the user OU |
@@ -325,6 +324,8 @@ On startup, the following happens:
 | `LDAP_ACCESSLOG_LOGOPS` | `writes` | `logops` |
 | `LDAP_ACCESSLOG_LOGPURGE` | `07+00:00 01+00:00` | `logpurge` |
 
+For upstream-contributed modules, shipped `.schema` and `.ldif` files are copied into the image schema directory during the build when they exist. The `accesslog` overlay is a special case: OpenLDAP 2.6 registers its audit schema from the module itself, so there is no separate upstream `audit.schema` file to install.
+
 ## Enabling TLS
 
 Example:
@@ -359,7 +360,7 @@ Supported file types:
 - `*.sh`
   - executable or run via `/bin/sh`
 
-All LDIFs are applied **locally via `ldapi:///` and SASL EXTERNAL**. The entrypoint script maps the local container root user to the configured `LDAP_ADMIN_DN`, so no plaintext credentials are required during the bootstrap phase.
+All LDIFs are applied **locally via `ldapi:///`** during bootstrap. When runtime policy requires transport security, choose a `LDAP_SIMPLE_BIND_MIN_SSF` value that still permits the local bootstrap path while continuing to reject insecure remote simple binds.
 
 Example file: `examples/bootstrap/20-demo-user.ldif`
 
@@ -395,7 +396,7 @@ This allows you to add, for example:
 - Fine-grained ACL adjustments
 - Experimental or rare modules
 
-## Fully Custom `slapd.conf`
+## Fully Custom Configuration
 
 If you want to bypass the default generation completely:
 

@@ -4,4 +4,5 @@ data/
 slapd-data/
 accesslog-data/
 certs/
+examples/certs/
 dist/

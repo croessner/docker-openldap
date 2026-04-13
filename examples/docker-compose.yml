@@ -2,13 +2,17 @@ services:
   openldap:
     build:
       context: ..
-    image: local/openldap-alpine-slapdconf:latest
+    image: ${IMAGE_NAME:-openldap}:${TAG:-latest}
     container_name: openldap
     restart: unless-stopped
     env_file:
       - ../.env.example
     environment:
       LDAP_ADMIN_PASSWORD: supersecret
+      LDAP_ENABLE_TLS: "true"
+      LDAP_ENABLE_LDAPS: "true"
+      LDAP_REQUIRE_TLS: "true"
+      LDAP_SIMPLE_BIND_MIN_SSF: "71"
       LDAP_ENABLE_MEMBEROF: "true"
       LDAP_ENABLE_REFINT: "true"
       LDAP_ENABLE_SYNCPROV: "true"
@@ -23,7 +27,7 @@ services:
       - ./custom-config/pre:/etc/openldap/custom-config/pre:ro
       - ./custom-config/post:/etc/openldap/custom-config/post:ro
       - ./custom-schema:/etc/openldap/custom-schema:ro
-      # - ./certs:/etc/openldap/certs:ro
+      - ./certs:/etc/openldap/certs:ro
 
 volumes:
   openldap_data:

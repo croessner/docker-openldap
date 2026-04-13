@@ -21,6 +21,13 @@ bool_true() {
   esac
 }
 
+password_scheme_uses_argon2() {
+  case "$(printf '%s' "${1:-}" | tr '[:lower:]' '[:upper:]')" in
+    *ARGON2*) return 0 ;;
+    *) return 1 ;;
+  esac
+}
+
 running_as_root() {
   [ "$(id -u)" -eq 0 ]
 }
@@ -180,10 +187,6 @@ render_schema_includes() {
     esac
   done
 
-  if bool_true "${LDAP_ENABLE_ACCESSLOG}"; then
-    printf 'include %s/audit.schema\n' "${LDAP_SCHEMA_DIR}"
-  fi
-
   if [ -d "${LDAP_CUSTOM_SCHEMA_DIR}" ]; then
     for schema in "${LDAP_CUSTOM_SCHEMA_DIR}"/*.schema; do
       [ -e "$schema" ] || continue
@@ -197,6 +200,7 @@ render_module_loads() {
   trap 'rm -f "$tmp_modules"' EXIT INT TERM
 
   printf '%s\n' "back_mdb.so" > "$tmp_modules"
+  printf '%s\n' "argon2.so" >> "$tmp_modules"
 
   if bool_true "${LDAP_ENABLE_ACCESSLOG}"; then
     printf '%s\n' "accesslog.so" >> "$tmp_modules"
@@ -351,16 +355,13 @@ EOF
 access to attrs=userPassword
     by self write
     by anonymous auth
-    by dn.exact="${LDAP_ADMIN_DN}" write
     by * none
 
 access to attrs=shadowLastChange
     by self write
-    by dn.exact="${LDAP_ADMIN_DN}" write
     by * read
 
 access to *
-    by dn.exact="${LDAP_ADMIN_DN}" write
     by users read
     by * none
 
@@ -406,7 +407,7 @@ write_config() {
     fi
 
     if bool_true "${LDAP_ENABLE_PEERCRED_ADMIN}"; then
-      printf 'authz-regexp "%s" "%s"\n' '^gidNumber=0\+uidNumber=0,cn=peercred,cn=external,cn=auth$' "${LDAP_ADMIN_DN}"
+      printf 'authz-regexp "%s" "%s"\n' "^gidNumber=${LDAP_PEERCRED_GID}\\+uidNumber=${LDAP_PEERCRED_UID},cn=peercred,cn=external,cn=auth$" "${LDAP_ADMIN_DN}"
     fi
 
     render_tls_block
@@ -473,19 +474,6 @@ EOF
       ;;
   esac
 
-  if bool_true "${LDAP_CREATE_ADMIN_ENTRY}"; then
-    cat >> "${tmp_ldif}" <<EOF
-dn: ${LDAP_ADMIN_DN}
-objectClass: top
-objectClass: organizationalRole
-objectClass: simpleSecurityObject
-cn: ${LDAP_ADMIN_USERNAME}
-description: LDAP administrator
-userPassword: ${LDAP_ADMIN_PASSWORD_HASH}
-
-EOF
-  fi
-
   if bool_true "${LDAP_CREATE_PEOPLE_OU}"; then
     cat >> "${tmp_ldif}" <<EOF
 dn: ou=${LDAP_PEOPLE_OU},${LDAP_BASE_DN}
@@ -502,19 +490,6 @@ dn: ou=${LDAP_GROUPS_OU},${LDAP_BASE_DN}
 objectClass: top
 objectClass: organizationalUnit
 ou: ${LDAP_GROUPS_OU}
-
-EOF
-  fi
-
-  if bool_true "${LDAP_ENABLE_ACCESSLOG}"; then
-    accesslog_attr="$(first_rdn_attr "${LDAP_ACCESSLOG_SUFFIX}")"
-    accesslog_value="$(first_rdn_value "${LDAP_ACCESSLOG_SUFFIX}")"
-    [ "${accesslog_attr}" = 'cn' ] || die "LDAP_ACCESSLOG_SUFFIX must begin with cn= when accesslog is enabled."
-    cat >> "${tmp_ldif}" <<EOF
-dn: ${LDAP_ACCESSLOG_SUFFIX}
-objectClass: top
-objectClass: auditContainer
-cn: ${accesslog_value}
 
 EOF
   fi
@@ -744,12 +719,18 @@ normalize_env() {
   export LDAP_ORGANISATION="${LDAP_ORGANISATION:-$(default_org_from_dn "${LDAP_BASE_DN}")}"
   export LDAP_ADMIN_USERNAME="${LDAP_ADMIN_USERNAME:-admin}"
   export LDAP_ADMIN_DN="${LDAP_ADMIN_DN:-cn=${LDAP_ADMIN_USERNAME},${LDAP_BASE_DN}}"
+  export LDAP_PEERCRED_UID="${LDAP_PEERCRED_UID:-$(id -u)}"
+  export LDAP_PEERCRED_GID="${LDAP_PEERCRED_GID:-$(id -g)}"
 
-  export LDAP_PASSWORD_HASH_SCHEME="${LDAP_PASSWORD_HASH_SCHEME:-{SSHA}}"
+  export LDAP_PASSWORD_HASH_SCHEME="${LDAP_PASSWORD_HASH_SCHEME:-{ARGON2}}"
 
   if [ -z "${LDAP_ADMIN_PASSWORD_HASH}" ]; then
     [ -n "${LDAP_ADMIN_PASSWORD}" ] || die "LDAP_ADMIN_PASSWORD or LDAP_ADMIN_PASSWORD_HASH is required."
-    LDAP_ADMIN_PASSWORD_HASH="$(slappasswd -h "${LDAP_PASSWORD_HASH_SCHEME}" -s "${LDAP_ADMIN_PASSWORD}")"
+    if password_scheme_uses_argon2 "${LDAP_PASSWORD_HASH_SCHEME}"; then
+      LDAP_ADMIN_PASSWORD_HASH="$(slappasswd -o module-load=argon2 -h "${LDAP_PASSWORD_HASH_SCHEME}" -s "${LDAP_ADMIN_PASSWORD}")"
+    else
+      LDAP_ADMIN_PASSWORD_HASH="$(slappasswd -h "${LDAP_PASSWORD_HASH_SCHEME}" -s "${LDAP_ADMIN_PASSWORD}")"
+    fi
     export LDAP_ADMIN_PASSWORD_HASH
   fi
 
@@ -771,7 +752,6 @@ normalize_env() {
   export LDAP_MDB_CHECKPOINT="${LDAP_MDB_CHECKPOINT:-1024 5}"
   export LDAP_MDB_DBNOSYNC="${LDAP_MDB_DBNOSYNC:-false}"
 
-  export LDAP_CREATE_ADMIN_ENTRY="${LDAP_CREATE_ADMIN_ENTRY:-true}"
   export LDAP_SKIP_DEFAULT_TREE="${LDAP_SKIP_DEFAULT_TREE:-false}"
   export LDAP_CREATE_PEOPLE_OU="${LDAP_CREATE_PEOPLE_OU:-true}"
   export LDAP_CREATE_GROUPS_OU="${LDAP_CREATE_GROUPS_OU:-true}"

@@ -1,7 +1,11 @@
-IMAGE_NAME ?= openldap-alpine-slapdconf
+IMAGE_NAME ?= openldap
 TAG ?= latest
+EXAMPLE_CERT_DIR := examples/certs
+EXAMPLE_TLS_CERT := $(EXAMPLE_CERT_DIR)/tls.crt
+EXAMPLE_TLS_KEY := $(EXAMPLE_CERT_DIR)/tls.key
+EXAMPLE_TLS_CA := $(EXAMPLE_CERT_DIR)/ca.crt
 
-.PHONY: build push sbom-local sbom-registry run compose-up compose-down
+.PHONY: build push sbom-local sbom-registry run compose-up compose-down compose-cert
 
 build:
 	docker build -t $(IMAGE_NAME):$(TAG) .
@@ -36,8 +40,20 @@ run:
 	  -v $$(pwd)/examples/bootstrap:/docker-entrypoint-initdb.d:ro \
 	  $(IMAGE_NAME):$(TAG)
 
-compose-up:
-	docker compose -f examples/docker-compose.yml up --build
+compose-cert:
+	mkdir -p $(EXAMPLE_CERT_DIR)
+	openssl req -x509 -newkey rsa:2048 -sha256 -nodes \
+	  -days 7 \
+	  -subj '/CN=localhost' \
+	  -addext 'subjectAltName=DNS:localhost,DNS:openldap,IP:127.0.0.1' \
+	  -keyout $(EXAMPLE_TLS_KEY) \
+	  -out $(EXAMPLE_TLS_CERT)
+	cp $(EXAMPLE_TLS_CERT) $(EXAMPLE_TLS_CA)
+	chmod 0644 $(EXAMPLE_TLS_CERT) $(EXAMPLE_TLS_KEY) $(EXAMPLE_TLS_CA)
+
+compose-up: compose-cert
+	IMAGE_NAME=$(IMAGE_NAME) TAG=$(TAG) docker compose -f examples/docker-compose.yml up --build
 
 compose-down:
-	docker compose -f examples/docker-compose.yml down -v
+	IMAGE_NAME=$(IMAGE_NAME) TAG=$(TAG) docker compose -f examples/docker-compose.yml down -v
+	rm -f $(EXAMPLE_TLS_CERT) $(EXAMPLE_TLS_KEY) $(EXAMPLE_TLS_CA)

@@ -68,7 +68,16 @@ RUN ./configure \
         --disable-wt \
     && make depend \
     && make -j"$(getconf _NPROCESSORS_ONLN)" \
-    && DESTDIR=/tmp/out make install
+    && DESTDIR=/tmp/out make install \
+    && schema_dest="/tmp/out/etc/openldap/openldap/schema" \
+    && find /tmp/build/src \
+         \( -path '/tmp/build/src/contrib/*' -o -path '/tmp/build/src/servers/slapd/*' \) \
+         -type f \
+         \( -name '*.schema' -o -name '*.ldif' \) \
+         ! -path '*/tests/*' \
+         ! -path '/tmp/build/src/servers/slapd/schema/*' \
+         ! -path '/tmp/build/src/servers/slapd/slapd.ldif' \
+         -exec cp {} "${schema_dest}/" \;
 
 FROM --platform=$TARGETPLATFORM alpine:${ALPINE_VERSION}
 
