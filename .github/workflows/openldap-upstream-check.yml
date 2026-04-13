@@ -46,8 +46,8 @@ jobs:
           latest_sha256="$(sha256sum /tmp/openldap.tgz | awk '{print $1}')"
 
           if curl -fsSL "$sha3_url" -o /tmp/openldap.sha3-512; then
-            expected_sha3="$(awk '{print $1}' /tmp/openldap.sha3-512)"
-            actual_sha3="$(openssl dgst -sha3-512 /tmp/openldap.tgz | awk '{print $NF}')"
+            expected_sha3="$(sed 's/^.*= //' /tmp/openldap.sha3-512 | tr '[:upper:]' '[:lower:]')"
+            actual_sha3="$(openssl dgst -sha3-512 /tmp/openldap.tgz | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')"
             [ "$expected_sha3" = "$actual_sha3" ]
           fi
 
@@ -141,4 +141,3 @@ jobs:
           assignees: croessner
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
-
