@@ -167,7 +167,7 @@ Recommended Docker Hub setup:
 - create the public repository `chrroessner/openldap`
 - create a Docker Hub access token dedicated to CI
 - keep `latest` for the default branch
-- publish version tags via Git tags such as `v2.6.13`
+- publish release tags in the form `v<openldap-version>-r<revision>`, for example `v2.6.13-r1`
 
 Important limitation:
 
@@ -190,7 +190,7 @@ make sbom-registry IMAGE_NAME=chrroessner/openldap TAG=latest
 Suggested first publish:
 
 ```bash
-git tag v2.6.13
+git tag v2.6.13-r1
 git push origin main --tags
 ```
 

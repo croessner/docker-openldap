@@ -36,27 +36,40 @@ jobs:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
 
-      - name: Extract Docker metadata
-        id: meta
-        uses: docker/metadata-action@v5
-        with:
-          images: ${{ env.IMAGE_NAME }}
-          tags: |
-            type=raw,value=latest,enable={{is_default_branch}}
-            type=raw,value=edge,enable={{is_default_branch}}
-            type=semver,pattern={{version}}
-            type=semver,pattern={{major}}.{{minor}}
-            type=sha,prefix=sha-
-          labels: |
-            org.opencontainers.image.title=OpenLDAP Alpine
-            org.opencontainers.image.description=OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support
-            org.opencontainers.image.licenses=MIT AND OLDAP-2.8
-            org.opencontainers.image.vendor=Rößner-Network-Solutions
-            org.opencontainers.image.authors=Christian Rößner <christian@roessner.email>
-            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
-            org.opencontainers.image.url=https://hub.docker.com/r/chrroessner/openldap
-            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
-            org.opencontainers.image.revision=${{ github.sha }}
+      - name: Extract release versions
+        id: versions
+        run: |
+          set -eu
+          openldap_version=$(sed -n 's/^ARG OPENLDAP_VERSION=//p' Dockerfile | head -n1)
+          alpine_version=$(sed -n 's/^ARG ALPINE_VERSION=//p' Dockerfile | head -n1)
+          release_tag=""
+          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+            release_tag="${GITHUB_REF_NAME#v}"
+          fi
+
+          image_version="${release_tag:-$openldap_version}"
+
+          printf 'openldap_version=%s\n' "$openldap_version" >> "$GITHUB_OUTPUT"
+          printf 'alpine_version=%s\n' "$alpine_version" >> "$GITHUB_OUTPUT"
+          printf 'release_tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
+          printf 'image_version=%s\n' "$image_version" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare Docker tags
+        id: docker_tags
+        run: |
+          set -eu
+          {
+            echo 'tags<<EOF'
+            echo "${IMAGE_NAME}:${{ steps.versions.outputs.openldap_version }}"
+            echo "${IMAGE_NAME}:${{ steps.versions.outputs.openldap_version }}-alpine${{ steps.versions.outputs.alpine_version }}"
+            if [ -n "${{ steps.versions.outputs.release_tag }}" ]; then
+              echo "${IMAGE_NAME}:${{ steps.versions.outputs.release_tag }}"
+            fi
+            if [ "${GITHUB_REF_NAME}" = "main" ] || [ "${GITHUB_REF_NAME}" = "master" ] || [ "${GITHUB_REF_TYPE}" = "tag" ]; then
+              echo "${IMAGE_NAME}:latest"
+            fi
+            echo 'EOF'
+          } >> "$GITHUB_OUTPUT"
 
       - name: Build and push image
         id: build
@@ -71,10 +84,20 @@ jobs:
             OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
             OCI_URL=https://hub.docker.com/r/chrroessner/openldap
             OCI_DOCUMENTATION=${{ github.server_url }}/${{ github.repository }}#readme
-            OCI_VERSION=${{ steps.meta.outputs.version }}
+            OCI_VERSION=${{ steps.versions.outputs.image_version }}
             OCI_REVISION=${{ github.sha }}
-          tags: ${{ steps.meta.outputs.tags }}
-          labels: ${{ steps.meta.outputs.labels }}
+          tags: ${{ steps.docker_tags.outputs.tags }}
+          labels: |
+            org.opencontainers.image.title=OpenLDAP Alpine
+            org.opencontainers.image.description=OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support
+            org.opencontainers.image.licenses=MIT AND OLDAP-2.8
+            org.opencontainers.image.vendor=Rößner-Network-Solutions
+            org.opencontainers.image.authors=Christian Rößner <christian@roessner.email>
+            org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
+            org.opencontainers.image.url=https://hub.docker.com/r/chrroessner/openldap
+            org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
+            org.opencontainers.image.version=${{ steps.versions.outputs.image_version }}
+            org.opencontainers.image.revision=${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
           attests: |
