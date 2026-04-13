@@ -1,0 +1,7 @@
+.DS_Store
+.env
+data/
+slapd-data/
+accesslog-data/
+certs/
+dist/

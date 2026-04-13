@@ -1,0 +1,30 @@
+services:
+  openldap:
+    build:
+      context: ..
+    image: local/openldap-alpine-slapdconf:latest
+    container_name: openldap
+    restart: unless-stopped
+    env_file:
+      - ../.env.example
+    environment:
+      LDAP_ADMIN_PASSWORD: supersecret
+      LDAP_ENABLE_MEMBEROF: "true"
+      LDAP_ENABLE_REFINT: "true"
+      LDAP_ENABLE_SYNCPROV: "true"
+      LDAP_ENABLE_ACCESSLOG: "true"
+    ports:
+      - "389:389"
+      - "636:636"
+    volumes:
+      - openldap_data:/var/lib/openldap/openldap-data
+      - openldap_accesslog:/var/lib/openldap/accesslog
+      - ./bootstrap:/docker-entrypoint-initdb.d:ro
+      - ./custom-config/pre:/etc/openldap/custom-config/pre:ro
+      - ./custom-config/post:/etc/openldap/custom-config/post:ro
+      - ./custom-schema:/etc/openldap/custom-schema:ro
+      # - ./certs:/etc/openldap/certs:ro
+
+volumes:
+  openldap_data:
+  openldap_accesslog:

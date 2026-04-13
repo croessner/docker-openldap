@@ -1,0 +1,25 @@
+dn: uid=demo,ou=people,dc=example,dc=org
+changetype: add
+objectClass: top
+objectClass: inetOrgPerson
+objectClass: organizationalPerson
+objectClass: person
+objectClass: posixAccount
+cn: Demo User
+sn: User
+givenName: Demo
+uid: demo
+uidNumber: 10000
+gidNumber: 10000
+homeDirectory: /home/demo
+mail: demo@example.org
+userPassword: {SSHA}HMKEdUK7r0t8KOQLYX9rhbCDfS5vYWkyMDI2IQ==
+
+dn: cn=demo,ou=groups,dc=example,dc=org
+changetype: add
+objectClass: top
+objectClass: groupOfNames
+objectClass: posixGroup
+cn: demo
+gidNumber: 10000
+member: uid=demo,ou=people,dc=example,dc=org
