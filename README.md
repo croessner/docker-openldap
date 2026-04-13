@@ -78,7 +78,7 @@ The OpenLDAP build enables dynamic modules so the image can load not only `mdb`,
 ### 1. Build
 
 ```bash
-docker build -t openldap-alpine-slapdconf .
+docker build -t openldap .
 ```
 
 To pin a specific upstream release explicitly:
@@ -87,7 +87,7 @@ To pin a specific upstream release explicitly:
 docker build \
   --build-arg OPENLDAP_VERSION=2.6.13 \
   --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap-alpine-slapdconf:2.6.13 .
+  -t openldap:2.6.13 .
 ```
 
 Multi-arch build with `buildx`:
@@ -97,15 +97,15 @@ docker buildx build \
   --platform linux/amd64,linux/arm64 \
   --build-arg OPENLDAP_VERSION=2.6.13 \
   --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap-alpine-slapdconf:2.6.13 \
+  -t openldap:2.6.13 \
   .
 ```
 
-Publish to Docker Hub:
+Publish to your own Docker Hub namespace:
 
 ```bash
 docker login
-make push IMAGE_NAME=chrroessner/openldap TAG=latest
+make push IMAGE_NAME=<your-namespace>/openldap TAG=latest
 ```
 
 Create a local SBOM export:
@@ -128,7 +128,7 @@ docker run -d \
   -v $(pwd)/data/openldap:/var/lib/openldap/openldap-data \
   -v $(pwd)/data/accesslog:/var/lib/openldap/accesslog \
   -v $(pwd)/examples/bootstrap:/docker-entrypoint-initdb.d:ro \
-  openldap-alpine-slapdconf
+  openldap
 ```
 
 ### 3. Test
@@ -139,7 +139,9 @@ ldapsearch -x -H ldap://127.0.0.1:389 -b dc=example,dc=org -D "cn=admin,dc=examp
 
 ## Publishing
 
-This repository includes a GitHub Actions workflow at `.github/workflows/docker-publish.yml` that publishes a multi-arch image to Docker Hub as `chrroessner/openldap`.
+This repository includes a GitHub Actions workflow at `.github/workflows/docker-publish.yml` that publishes the maintainer image to Docker Hub as `chrroessner/openldap`.
+
+If you fork this repository, adjust the workflow image name and use your own Docker Hub namespace. The example push commands in this README intentionally use `<your-namespace>/openldap` for that reason.
 
 The workflow runs:
 
@@ -164,7 +166,7 @@ Required GitHub repository secrets:
 
 Recommended Docker Hub setup:
 
-- create the public repository `chrroessner/openldap`
+- create a public repository in your own namespace, for example `<your-namespace>/openldap`
 - create a Docker Hub access token dedicated to CI
 - keep `latest` for the default branch
 - publish release tags in the form `v<openldap-version>-r<revision>`, for example `v2.6.13-r1`
@@ -184,7 +186,7 @@ ls dist/sbom-local | grep sbom
 Registry SBOM inspection after push:
 
 ```bash
-make sbom-registry IMAGE_NAME=chrroessner/openldap TAG=latest
+make sbom-registry IMAGE_NAME=<your-namespace>/openldap TAG=latest
 ```
 
 Suggested first publish:
@@ -340,7 +342,7 @@ docker run -d \
   -e LDAP_TLS_KEY_FILE=/etc/openldap/certs/tls.key \
   -e LDAP_TLS_CA_FILE=/etc/openldap/certs/ca.crt \
   -v $(pwd)/certs:/etc/openldap/certs:ro \
-  openldap-alpine-slapdconf
+  openldap
 ```
 
 ## Init Scripts and LDIFs
@@ -406,7 +408,7 @@ docker run -d \
   -e LDAP_SKIP_DEFAULT_CONFIG=true \
   -v $(pwd)/my-slapd.conf:/etc/openldap/slapd.conf:ro \
   -v $(pwd)/data:/var/lib/openldap/openldap-data \
-  openldap-alpine-slapdconf
+  openldap
 ```
 
 In this mode, you are fully responsible for the configuration.
@@ -421,7 +423,7 @@ docker run -d \
   -e LDAP_CONFIG_BACKEND=slapd.d \
   -v $(pwd)/slapd.d:/etc/openldap/slapd.d \
   -v $(pwd)/data:/var/lib/openldap/openldap-data \
-  openldap-alpine-slapdconf
+  openldap
 ```
 
 Behavior in this mode:
