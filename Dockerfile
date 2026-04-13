@@ -23,7 +23,8 @@ LABEL org.opencontainers.image.title="OpenLDAP Alpine" \
       org.opencontainers.image.description="OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support" \
       org.opencontainers.image.licenses="OLDAP-2.8"
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
         argon2-dev \
         build-base \
         ca-certificates \
@@ -95,7 +96,8 @@ LABEL maintainer="Christian Rößner <christian@roessner.email>" \
       org.opencontainers.image.base.name="docker.io/library/alpine:${ALPINE_VERSION}" \
       io.roessner.openldap.version="${OPENLDAP_VERSION}"
 
-RUN apk add --no-cache \
+RUN apk upgrade --no-cache \
+    && apk add --no-cache \
         argon2-libs \
         ca-certificates \
         cyrus-sasl \
@@ -114,15 +116,21 @@ RUN apk add --no-cache \
         /etc/openldap/custom-schema \
         /var/lib/openldap/accesslog \
         /var/lib/openldap/openldap-data \
-        /var/run/openldap \
-    && chown -R ldap:ldap /var/lib/openldap /var/run/openldap
+        /var/run/openldap
 
 COPY --from=builder /tmp/out/ /
 COPY docker-entrypoint.sh /usr/local/bin/docker-entrypoint.sh
 COPY docker-healthcheck.sh /usr/local/bin/docker-healthcheck.sh
 
 RUN ln -sf ../lib/openldap/slapd /usr/sbin/slapd \
+    && chown -R ldap:ldap \
+        /docker-entrypoint-initdb.d \
+        /etc/openldap \
+        /var/lib/openldap \
+        /var/run/openldap \
     && chmod 0755 /usr/local/bin/docker-entrypoint.sh /usr/local/bin/docker-healthcheck.sh
+
+USER ldap:ldap
 
 EXPOSE 389 636
 

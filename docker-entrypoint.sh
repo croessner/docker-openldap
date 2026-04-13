@@ -21,6 +21,27 @@ bool_true() {
   esac
 }
 
+running_as_root() {
+  [ "$(id -u)" -eq 0 ]
+}
+
+run_as_ldap() {
+  if running_as_root; then
+    su-exec ldap:ldap "$@"
+    return
+  fi
+
+  "$@"
+}
+
+exec_as_ldap() {
+  if running_as_root; then
+    exec su-exec ldap:ldap "$@"
+  fi
+
+  exec "$@"
+}
+
 file_env() {
   var="$1"
   default="${2:-}"
@@ -101,8 +122,10 @@ ensure_dir() {
   mode="$4"
 
   mkdir -p "$dir"
-  chown "$owner:$group" "$dir"
-  chmod "$mode" "$dir"
+  if running_as_root; then
+    chown "$owner:$group" "$dir"
+    chmod "$mode" "$dir"
+  fi
 }
 
 append_sorted_dir() {
@@ -215,7 +238,7 @@ render_tls_block() {
 
   for f in "${LDAP_TLS_CERT_FILE}" "${LDAP_TLS_KEY_FILE}" "${LDAP_TLS_CA_FILE}"; do
     [ -r "$f" ] || die "TLS file is missing or unreadable: $f"
-    su-exec ldap:ldap test -r "$f" || die "TLS file must be readable by ldap user: $f"
+    run_as_ldap test -r "$f" || die "TLS file must be readable by ldap user: $f"
   done
 
   printf 'TLSCACertificateFile %s\n' "$LDAP_TLS_CA_FILE"
@@ -224,7 +247,7 @@ render_tls_block() {
 
   if [ -n "${LDAP_TLS_DH_PARAM_FILE}" ]; then
     [ -r "${LDAP_TLS_DH_PARAM_FILE}" ] || die "Cannot read LDAP_TLS_DH_PARAM_FILE: ${LDAP_TLS_DH_PARAM_FILE}"
-    su-exec ldap:ldap test -r "${LDAP_TLS_DH_PARAM_FILE}" || die "DH param file must be readable by ldap user: ${LDAP_TLS_DH_PARAM_FILE}"
+    run_as_ldap test -r "${LDAP_TLS_DH_PARAM_FILE}" || die "DH param file must be readable by ldap user: ${LDAP_TLS_DH_PARAM_FILE}"
     printf 'TLSDHParamFile %s\n' "$LDAP_TLS_DH_PARAM_FILE"
   fi
 
@@ -521,9 +544,9 @@ start_temp_slapd() {
   rm -f "${LDAP_RUN_DIR}/slapd.pid" "${LDAP_RUN_DIR}/slapd.args"
 
   if config_backend_is_slapd_d; then
-    su-exec ldap:ldap slapd -F "${LDAP_CONFIG_DIR}" -h "${LDAP_LDAPI_URI}" -d 0 &
+    run_as_ldap slapd -F "${LDAP_CONFIG_DIR}" -h "${LDAP_LDAPI_URI}" -d 0 &
   else
-    su-exec ldap:ldap slapd -f "${LDAP_CONF}" -h "${LDAP_LDAPI_URI}" -d 0 &
+    run_as_ldap slapd -f "${LDAP_CONF}" -h "${LDAP_LDAPI_URI}" -d 0 &
   fi
   TEMP_SLAPD_PID="$!"
 
@@ -652,7 +675,9 @@ materialize_config_backend() {
 
   mkdir -p "${LDAP_CONFIG_DIR}"
   cp -a "${tmp_dir}"/. "${LDAP_CONFIG_DIR}"/
-  chown -R ldap:ldap "${LDAP_CONFIG_DIR}"
+  if running_as_root; then
+    chown -R ldap:ldap "${LDAP_CONFIG_DIR}"
+  fi
   validate_config_dir
   rm -rf "${tmp_dir}"
   rm -f "${tmp_log}"
@@ -847,7 +872,9 @@ main() {
     run_initdb_scripts
     stop_temp_slapd
     touch "${LDAP_DB_DIR}/.docker-openldap-initialized"
-    chown ldap:ldap "${LDAP_DB_DIR}/.docker-openldap-initialized"
+    if running_as_root; then
+      chown ldap:ldap "${LDAP_DB_DIR}/.docker-openldap-initialized"
+    fi
     elif config_backend_is_slapd_d; then
       log "Fresh data directory detected with persisted slapd.d configuration. Skipping automatic bootstrap."
       warn "Persisted cn=config may have diverged from current environment values. Initialize directory data manually, or remove ${LDAP_CONFIG_DIR} to reseed slapd.d from ${LDAP_CONF}."
@@ -862,9 +889,9 @@ main() {
   LISTEN_URIS="$(build_listen_uris)"
   log "Starting slapd with config backend ${ACTIVE_LDAP_CONFIG_BACKEND} and URIs: ${LISTEN_URIS}"
   if config_backend_is_slapd_d; then
-    exec su-exec ldap:ldap slapd -F "${LDAP_CONFIG_DIR}" -h "${LISTEN_URIS}" -d "${LDAP_DEBUG_LEVEL}" "$@"
+    exec_as_ldap slapd -F "${LDAP_CONFIG_DIR}" -h "${LISTEN_URIS}" -d "${LDAP_DEBUG_LEVEL}" "$@"
   fi
-  exec su-exec ldap:ldap slapd -f "${LDAP_CONF}" -h "${LISTEN_URIS}" -d "${LDAP_DEBUG_LEVEL}" "$@"
+  exec_as_ldap slapd -f "${LDAP_CONF}" -h "${LISTEN_URIS}" -d "${LDAP_DEBUG_LEVEL}" "$@"
 }
 
 main "$@"
