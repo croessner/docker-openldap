@@ -141,6 +141,8 @@ ldapsearch -x -H ldap://127.0.0.1:389 -b dc=example,dc=org -D "cn=admin,dc=examp
 
 This repository includes a GitHub Actions workflow at `.github/workflows/docker-publish.yml` that publishes the maintainer image to Docker Hub as `chrroessner/openldap`.
 
+It also includes `.github/workflows/openldap-upstream-check.yml`, which runs daily, checks the official OpenLDAP release directory for a newer upstream tarball, refreshes the pinned SHA256, and opens or updates a pull request automatically when the pinned version in this repository is behind upstream.
+
 If you fork this repository, adjust the workflow image name and use your own Docker Hub namespace. The example push commands in this README intentionally use `<your-namespace>/openldap` for that reason.
 
 The workflow runs:

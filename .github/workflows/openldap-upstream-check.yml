@@ -1,0 +1,144 @@
+name: Check OpenLDAP Upstream
+
+on:
+  schedule:
+    - cron: "23 5 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+  pull-requests: write
+
+concurrency:
+  group: openldap-upstream-check
+  cancel-in-progress: false
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Detect latest upstream release
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          release_index_url="https://www.openldap.org/software/download/OpenLDAP/openldap-release/"
+          current_version="$(sed -n 's/^ARG OPENLDAP_VERSION=//p' Dockerfile | head -n1)"
+          current_sha256="$(sed -n 's/^ARG OPENLDAP_SHA256=//p' Dockerfile | head -n1)"
+
+          latest_version="$(
+            curl -fsSL "$release_index_url" |
+              grep -o 'openldap-[0-9][0-9.]*\.tgz' |
+              sed 's/^openldap-//; s/\.tgz$//' |
+              sort -uV |
+              tail -n1
+          )"
+
+          tarball_url="${release_index_url}openldap-${latest_version}.tgz"
+          sha3_url="${release_index_url}openldap-${latest_version}.sha3-512"
+
+          curl -fsSL "$tarball_url" -o /tmp/openldap.tgz
+          latest_sha256="$(sha256sum /tmp/openldap.tgz | awk '{print $1}')"
+
+          if curl -fsSL "$sha3_url" -o /tmp/openldap.sha3-512; then
+            expected_sha3="$(awk '{print $1}' /tmp/openldap.sha3-512)"
+            actual_sha3="$(openssl dgst -sha3-512 /tmp/openldap.tgz | awk '{print $NF}')"
+            [ "$expected_sha3" = "$actual_sha3" ]
+          fi
+
+          update_needed=false
+          change_kind="none"
+          pr_title="chore: no upstream OpenLDAP update needed"
+
+          if [ "$latest_version" != "$current_version" ]; then
+            update_needed=true
+            change_kind="version"
+            pr_title="chore: bump OpenLDAP to ${latest_version}"
+          elif [ "$latest_sha256" != "$current_sha256" ]; then
+            update_needed=true
+            change_kind="checksum"
+            pr_title="chore: refresh OpenLDAP ${current_version} checksum"
+          fi
+
+          {
+            echo "current_version=${current_version}"
+            echo "current_sha256=${current_sha256}"
+            echo "latest_version=${latest_version}"
+            echo "latest_sha256=${latest_sha256}"
+            echo "tarball_url=${tarball_url}"
+            echo "update_needed=${update_needed}"
+            echo "change_kind=${change_kind}"
+            echo "pr_title=${pr_title}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### OpenLDAP upstream check"
+            echo ""
+            echo "- Current pinned version: \`${current_version}\`"
+            echo "- Latest upstream version: \`${latest_version}\`"
+            echo "- Current pinned SHA256: \`${current_sha256}\`"
+            echo "- Latest upstream SHA256: \`${latest_sha256}\`"
+            echo "- Tarball: ${tarball_url}"
+            echo "- Update needed: \`${update_needed}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update pinned files
+        if: steps.upstream.outputs.update_needed == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          old_version="${{ steps.upstream.outputs.current_version }}"
+          old_sha256="${{ steps.upstream.outputs.current_sha256 }}"
+          new_version="${{ steps.upstream.outputs.latest_version }}"
+          new_sha256="${{ steps.upstream.outputs.latest_sha256 }}"
+
+          sed -i "s/^ARG OPENLDAP_VERSION=.*/ARG OPENLDAP_VERSION=${new_version}/" Dockerfile
+          sed -i "s/^ARG OPENLDAP_SHA256=.*/ARG OPENLDAP_SHA256=${new_sha256}/" Dockerfile
+
+          OLD_VERSION="$old_version" \
+          NEW_VERSION="$new_version" \
+          OLD_SHA256="$old_sha256" \
+          NEW_SHA256="$new_sha256" \
+          ruby -e '
+            readme = File.read("README.md")
+            readme.gsub!(ENV.fetch("OLD_VERSION"), ENV.fetch("NEW_VERSION"))
+            readme.gsub!(ENV.fetch("OLD_SHA256"), ENV.fetch("NEW_SHA256"))
+            File.write("README.md", readme)
+          '
+
+      - name: Create or update pull request
+        if: steps.upstream.outputs.update_needed == 'true'
+        uses: peter-evans/create-pull-request@v7
+        with:
+          branch: automation/openldap-upstream
+          delete-branch: true
+          commit-message: ${{ steps.upstream.outputs.pr_title }}
+          title: ${{ steps.upstream.outputs.pr_title }}
+          body: |
+            This automated PR updates the pinned OpenLDAP release used by this repository.
+
+            Summary:
+            - Current pinned version: `${{ steps.upstream.outputs.current_version }}`
+            - Latest upstream version: `${{ steps.upstream.outputs.latest_version }}`
+            - Latest upstream tarball: `${{ steps.upstream.outputs.tarball_url }}`
+            - Change type: `${{ steps.upstream.outputs.change_kind }}`
+
+            Updated files:
+            - `Dockerfile`
+            - `README.md`
+
+            Sources:
+            - https://www.openldap.org/software/
+            - ${{ steps.upstream.outputs.tarball_url }}
+
+            This PR was generated by `.github/workflows/openldap-upstream-check.yml`.
+          assignees: croessner
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+
