@@ -71,7 +71,7 @@ The image is built in two stages:
 - A **builder stage** compiles OpenLDAP from the official source tarball
 - A **runtime stage** keeps Alpine as the base image and only adds the required runtime libraries plus `su-exec`
 
-The OpenLDAP build enables dynamic modules so the image can load not only `mdb`, but also additional backends and overlays from the upstream source tree. The **generated default configuration** intentionally focuses on **a clean `mdb` setup**. For special cases, you can load additional modules, provide your own `slapd.conf`, or persist `slapd.d` as the runtime source of truth.
+The OpenLDAP build enables dynamic modules so the image can load not only `mdb`, but also additional backends and overlays from the upstream source tree. The build also compiles the upstream `pw-sha2` contrib password module into the image. The **generated default configuration** intentionally focuses on **a clean `mdb` setup**. For special cases, you can load additional modules, provide your own `slapd.conf`, or persist `slapd.d` as the runtime source of truth.
 
 ## Quick Start
 
@@ -324,7 +324,7 @@ On startup, the following happens:
 | `LDAP_ACCESSLOG_LOGOPS` | `writes` | `logops` |
 | `LDAP_ACCESSLOG_LOGPURGE` | `07+00:00 01+00:00` | `logpurge` |
 
-For upstream-contributed modules, shipped `.schema` and `.ldif` files are copied into the image schema directory during the build when they exist. The `accesslog` overlay is a special case: OpenLDAP 2.6 registers its audit schema from the module itself, so there is no separate upstream `audit.schema` file to install.
+For upstream-contributed modules, shipped `.schema` and `.ldif` files are copied into the image schema directory during the build when they exist. The `pw-sha2` password module is built and installed as `pw-sha2.la` / `pw-sha2.so` under the OpenLDAP module directory, so custom configurations can load it with `moduleload pw-sha2.la` or `moduleload pw-sha2.so`. The `accesslog` overlay is a special case: OpenLDAP 2.6 registers its audit schema from the module itself, so there is no separate upstream `audit.schema` file to install.
 
 ## Enabling TLS
 

@@ -69,6 +69,10 @@ RUN ./configure \
     && make depend \
     && make -j"$(getconf _NPROCESSORS_ONLN)" \
     && DESTDIR=/tmp/out make install \
+    && make -C contrib/slapd-modules/passwd/sha2 \
+         DESTDIR=/tmp/out \
+         moduledir=/usr/lib/openldap/openldap \
+         install \
     && schema_dest="/tmp/out/etc/openldap/openldap/schema" \
     && find /tmp/build/src \
          \( -path '/tmp/build/src/contrib/*' -o -path '/tmp/build/src/servers/slapd/*' \) \
