@@ -3,8 +3,8 @@ ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 
 ARG ALPINE_VERSION=3.23
-ARG OPENLDAP_VERSION=2.6.13
-ARG OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656
+ARG OPENLDAP_VERSION=2.7.0
+ARG OPENLDAP_SHA256=9e86f37da375aa948a1b478dd76fe87b02090e47c21facae19223588e3407922
 ARG OCI_SOURCE="https://github.com/croessner/docker-openldap"
 ARG OCI_URL="https://hub.docker.com/r/chrroessner/openldap"
 ARG OCI_DOCUMENTATION="https://github.com/croessner/docker-openldap#readme"

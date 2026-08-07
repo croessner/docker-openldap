@@ -85,9 +85,9 @@ To pin a specific upstream release explicitly:
 
 ```bash
 docker build \
-  --build-arg OPENLDAP_VERSION=2.6.13 \
-  --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap:2.6.13 .
+  --build-arg OPENLDAP_VERSION=2.7.0 \
+  --build-arg OPENLDAP_SHA256=9e86f37da375aa948a1b478dd76fe87b02090e47c21facae19223588e3407922 \
+  -t openldap:2.7.0 .
 ```
 
 Multi-arch build with `buildx`:
@@ -95,9 +95,9 @@ Multi-arch build with `buildx`:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg OPENLDAP_VERSION=2.6.13 \
-  --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap:2.6.13 \
+  --build-arg OPENLDAP_VERSION=2.7.0 \
+  --build-arg OPENLDAP_SHA256=9e86f37da375aa948a1b478dd76fe87b02090e47c21facae19223588e3407922 \
+  -t openldap:2.7.0 \
   .
 ```
 
@@ -171,7 +171,7 @@ Recommended Docker Hub setup:
 - create a public repository in your own namespace, for example `<your-namespace>/openldap`
 - create a Docker Hub access token dedicated to CI
 - keep `latest` for the default branch
-- publish release tags in the form `v<openldap-version>-r<revision>`, for example `v2.6.13-r1`
+- publish release tags in the form `v<openldap-version>-r<revision>`, for example `v2.7.0-r1`
 
 Important limitation:
 
@@ -194,7 +194,7 @@ make sbom-registry IMAGE_NAME=<your-namespace>/openldap TAG=latest
 Suggested first publish:
 
 ```bash
-git tag v2.6.13-r1
+git tag v2.7.0-r1
 git push origin main --tags
 ```
 
