@@ -7,13 +7,15 @@ on:
       - master
     tags:
       - "v*"
-  schedule:
-    - cron: "17 4 * * *"
   workflow_dispatch:
 
 env:
   IMAGE_NAME: chrroessner/openldap
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+concurrency:
+  group: docker-publish
+  cancel-in-progress: false
 
 jobs:
   docker:
@@ -60,15 +62,17 @@ jobs:
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             candidate="${GITHUB_REF_NAME#v}"
             case "$candidate" in
-              "${OPENLDAP_VERSION}"-r*) release_tag="$candidate" ;;
+              "${OPENLDAP_VERSION}-r${IMAGE_REVISION}") release_tag="$candidate" ;;
             esac
           fi
 
           {
             echo "alpine_version=${ALPINE_VERSION}"
+            echo "alpine_digest=${ALPINE_DIGEST}"
             echo "openldap_channel=${OPENLDAP_CHANNEL}"
             echo "openldap_version=${OPENLDAP_VERSION}"
             echo "openldap_sha256=${OPENLDAP_SHA256}"
+            echo "image_revision=${IMAGE_REVISION}"
             echo "release_tag=${release_tag}"
           } >> "$GITHUB_OUTPUT"
 
@@ -78,14 +82,32 @@ jobs:
         env:
           CHANNEL: ${{ matrix.channel }}
           VERSION: ${{ steps.versions.outputs.openldap_version }}
+          IMAGE_REVISION: ${{ steps.versions.outputs.image_revision }}
           ALPINE_VERSION: ${{ steps.versions.outputs.alpine_version }}
           RELEASE_TAG: ${{ steps.versions.outputs.release_tag }}
         run: |
           set -euo pipefail
 
+          revision_ref="${IMAGE_NAME}:${VERSION}-r${IMAGE_REVISION}"
+          tags="$(
+            scripts/docker-tags.sh \
+              "$IMAGE_NAME" \
+              "$CHANNEL" \
+              "$VERSION" \
+              "$IMAGE_REVISION" \
+              "$ALPINE_VERSION" \
+              "$RELEASE_TAG"
+          )"
+
+          if docker buildx imagetools inspect "$revision_ref" >/dev/null 2>&1; then
+            tags="$(printf '%s\n' "$tags" | grep -Fvx "$revision_ref")"
+            echo "Existing revision tag ${revision_ref} will not be overwritten" \
+              >> "$GITHUB_STEP_SUMMARY"
+          fi
+
           {
             echo 'tags<<EOF'
-            scripts/docker-tags.sh "$IMAGE_NAME" "$CHANNEL" "$VERSION" "$ALPINE_VERSION" "$RELEASE_TAG"
+            printf '%s\n' "$tags"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -100,13 +122,15 @@ jobs:
           platforms: linux/amd64,linux/arm64
           build-args: |
             ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
+            ALPINE_DIGEST=${{ steps.versions.outputs.alpine_digest }}
             OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
             OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
             OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
+            IMAGE_REVISION=${{ steps.versions.outputs.image_revision }}
             OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
             OCI_URL=https://hub.docker.com/r/chrroessner/openldap
             OCI_DOCUMENTATION=${{ github.server_url }}/${{ github.repository }}#readme
-            OCI_VERSION=${{ steps.versions.outputs.openldap_version }}
+            OCI_VERSION=${{ steps.versions.outputs.openldap_version }}-r${{ steps.versions.outputs.image_revision }}
             OCI_REVISION=${{ github.sha }}
           tags: ${{ steps.docker_tags.outputs.tags }}
           labels: |
@@ -118,9 +142,10 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.url=https://hub.docker.com/r/chrroessner/openldap
             org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
-            org.opencontainers.image.version=${{ steps.versions.outputs.openldap_version }}
+            org.opencontainers.image.version=${{ steps.versions.outputs.openldap_version }}-r${{ steps.versions.outputs.image_revision }}
             org.opencontainers.image.revision=${{ github.sha }}
             io.roessner.openldap.channel=${{ steps.versions.outputs.openldap_channel }}
+            io.roessner.openldap.image-revision=${{ steps.versions.outputs.image_revision }}
           cache-from: type=gha,scope=openldap-${{ matrix.channel }}
           cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
           attests: |

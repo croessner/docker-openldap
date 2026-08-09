@@ -3,10 +3,12 @@ services:
     build:
       context: ..
       args:
-        ALPINE_VERSION: ${ALPINE_VERSION:-3.24}
+        ALPINE_VERSION: ${ALPINE_VERSION:-3.24.1}
+        ALPINE_DIGEST: ${ALPINE_DIGEST:-sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b}
         OPENLDAP_CHANNEL: ${OPENLDAP_CHANNEL:-lts}
         OPENLDAP_VERSION: ${OPENLDAP_VERSION:-2.6.14}
         OPENLDAP_SHA256: ${OPENLDAP_SHA256:-806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107}
+        IMAGE_REVISION: ${IMAGE_REVISION:-1}
     image: ${IMAGE_NAME:-openldap}:${TAG:-latest}
     container_name: openldap
     restart: unless-stopped

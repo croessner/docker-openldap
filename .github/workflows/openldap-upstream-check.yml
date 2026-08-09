@@ -52,6 +52,7 @@ jobs:
           source "$MANIFEST"
           current_version="$OPENLDAP_VERSION"
           current_sha256="$OPENLDAP_SHA256"
+          current_revision="$IMAGE_REVISION"
           download_page_url="https://www.openldap.org/software/download/"
           release_index_url="https://www.openldap.org/software/download/OpenLDAP/openldap-release/"
 
@@ -97,6 +98,7 @@ jobs:
           {
             echo "current_version=${current_version}"
             echo "current_sha256=${current_sha256}"
+            echo "current_revision=${current_revision}"
             echo "latest_version=${latest_version}"
             echo "latest_sha256=${latest_sha256}"
             echo "tarball_url=${tarball_url}"
@@ -116,31 +118,44 @@ jobs:
 
       - name: Update OpenLDAP pin
         if: steps.upstream.outputs.update_needed == 'true'
+        id: update
         shell: bash
         env:
           CHANNEL: ${{ matrix.channel }}
           MANIFEST: ${{ matrix.manifest }}
           OLD_VERSION: ${{ steps.upstream.outputs.current_version }}
           OLD_SHA256: ${{ steps.upstream.outputs.current_sha256 }}
+          OLD_REVISION: ${{ steps.upstream.outputs.current_revision }}
           NEW_VERSION: ${{ steps.upstream.outputs.latest_version }}
           NEW_SHA256: ${{ steps.upstream.outputs.latest_sha256 }}
+          CHANGE_KIND: ${{ steps.upstream.outputs.change_kind }}
         run: |
           set -euo pipefail
 
           sed -i "s/^OPENLDAP_VERSION=.*/OPENLDAP_VERSION=${NEW_VERSION}/" "$MANIFEST"
           sed -i "s/^OPENLDAP_SHA256=.*/OPENLDAP_SHA256=${NEW_SHA256}/" "$MANIFEST"
 
+          if [ "$CHANGE_KIND" = version ]; then
+            new_revision="$(scripts/bump-image-revision.sh "$MANIFEST" reset)"
+          else
+            new_revision="$(scripts/bump-image-revision.sh "$MANIFEST" bump)"
+          fi
+          echo "new_revision=${new_revision}" >> "$GITHUB_OUTPUT"
+          export NEW_REVISION="$new_revision"
+
           # shellcheck disable=SC2016
           ruby -e '
             readme = File.read("README.md")
             old_version = ENV.fetch("OLD_VERSION")
             new_version = ENV.fetch("NEW_VERSION")
+            new_revision = ENV.fetch("NEW_REVISION")
             channel = ENV.fetch("CHANNEL")
             old_series = old_version.split(".")[0, 2].join(".")
             new_series = new_version.split(".")[0, 2].join(".")
 
             readme.gsub!(old_version, new_version)
             readme.gsub!(ENV.fetch("OLD_SHA256"), ENV.fetch("NEW_SHA256"))
+            readme.gsub!(new_version + "-r" + ENV.fetch("OLD_REVISION"), new_version + "-r" + new_revision)
 
             if old_series != new_series
               readme.gsub!("CHANNEL=#{channel} TAG=#{old_series}-#{channel}", "CHANNEL=#{channel} TAG=#{new_series}-#{channel}")
@@ -161,6 +176,8 @@ jobs:
             sed -i "s/^ARG OPENLDAP_SHA256=.*/ARG OPENLDAP_SHA256=${NEW_SHA256}/" Dockerfile
             sed -i "s/OPENLDAP_VERSION: \${OPENLDAP_VERSION:-${OLD_VERSION}}/OPENLDAP_VERSION: \${OPENLDAP_VERSION:-${NEW_VERSION}}/" examples/docker-compose.yml
             sed -i "s/OPENLDAP_SHA256: \${OPENLDAP_SHA256:-${OLD_SHA256}}/OPENLDAP_SHA256: \${OPENLDAP_SHA256:-${NEW_SHA256}}/" examples/docker-compose.yml
+            sed -i "s/IMAGE_REVISION: \${IMAGE_REVISION:-${OLD_REVISION}}/IMAGE_REVISION: \${IMAGE_REVISION:-${new_revision}}/" examples/docker-compose.yml
+            sed -i "s/^ARG IMAGE_REVISION=.*/ARG IMAGE_REVISION=${new_revision}/" Dockerfile
           fi
 
       - name: Create or update OpenLDAP pull request
@@ -178,6 +195,7 @@ jobs:
             - Upstream release: `${{ steps.upstream.outputs.latest_version }}`
             - Tarball: ${{ steps.upstream.outputs.tarball_url }}
             - Change type: `${{ steps.upstream.outputs.change_kind }}`
+            - Image revision: `r${{ steps.update.outputs.new_revision }}`
 
             The LTS and feature/stable channels are intentionally handled by separate jobs and branches.
           assignees: croessner
@@ -192,7 +210,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Detect current Alpine stable branch
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Detect current Alpine stable image
         id: upstream
         shell: bash
         run: |
@@ -200,60 +221,115 @@ jobs:
 
           source versions/alpine.env
           current_version="$ALPINE_VERSION"
+          current_digest="$ALPINE_DIGEST"
           metadata_url="https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml"
           latest_version="$(
             curl -fsSL "$metadata_url" |
-              sed -n 's/^  branch: v\([0-9][0-9.]*\)$/\1/p' |
+              sed -n 's/^  version: \([0-9][0-9.]*\)$/\1/p' |
               head -n1
           )"
 
-          if [[ ! "$latest_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
-            echo "Could not determine the current Alpine stable branch" >&2
+          if [[ ! "$latest_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not determine the current Alpine stable release" >&2
+            exit 1
+          fi
+
+          latest_digest="$(
+            docker buildx imagetools inspect "alpine:${latest_version}" --format '{{ json .Manifest }}' |
+              jq -r '.digest'
+          )"
+          if [[ ! "$latest_digest" =~ ^sha256:[0-9a-f]{64}$ ]]; then
+            echo "Could not determine the multiarch digest for alpine:${latest_version}" >&2
             exit 1
           fi
 
           update_needed=false
+          change_kind=none
           pr_title="chore: no Alpine update needed"
           if [ "$latest_version" != "$current_version" ]; then
             update_needed=true
+            change_kind=version
             pr_title="chore: bump Alpine to ${latest_version}"
+          elif [ "$latest_digest" != "$current_digest" ]; then
+            update_needed=true
+            change_kind=digest
+            pr_title="chore: refresh Alpine ${latest_version} image"
           fi
 
           {
             echo "current_version=${current_version}"
+            echo "current_digest=${current_digest}"
             echo "latest_version=${latest_version}"
+            echo "latest_digest=${latest_digest}"
             echo "metadata_url=${metadata_url}"
             echo "update_needed=${update_needed}"
+            echo "change_kind=${change_kind}"
             echo "pr_title=${pr_title}"
           } >> "$GITHUB_OUTPUT"
 
           {
             echo "### Alpine stable upstream check"
             echo
-            echo "- Current minor: \`${current_version}\`"
-            echo "- Latest stable minor: \`${latest_version}\`"
+            echo "- Current image: \`${current_version}@${current_digest}\`"
+            echo "- Latest image: \`${latest_version}@${latest_digest}\`"
             echo "- Update needed: \`${update_needed}\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Update Alpine pin
         if: steps.upstream.outputs.update_needed == 'true'
+        id: update
         shell: bash
         env:
           OLD_VERSION: ${{ steps.upstream.outputs.current_version }}
           NEW_VERSION: ${{ steps.upstream.outputs.latest_version }}
+          OLD_DIGEST: ${{ steps.upstream.outputs.current_digest }}
+          NEW_DIGEST: ${{ steps.upstream.outputs.latest_digest }}
         run: |
           set -euo pipefail
 
+          # shellcheck disable=SC1091
+          source versions/openldap-lts.env
+          lts_version="$OPENLDAP_VERSION"
+          old_lts_revision="$IMAGE_REVISION"
+          # shellcheck disable=SC1091
+          source versions/openldap-stable.env
+          stable_version="$OPENLDAP_VERSION"
+          old_stable_revision="$IMAGE_REVISION"
+
           sed -i "s/^ALPINE_VERSION=.*/ALPINE_VERSION=${NEW_VERSION}/" versions/alpine.env
-          sed -i "s/^ARG ALPINE_VERSION=.*/ARG ALPINE_VERSION=${NEW_VERSION}/" Dockerfile
+          sed -i "s/^ALPINE_DIGEST=.*/ALPINE_DIGEST=${NEW_DIGEST}/" versions/alpine.env
+          sed -i "s/^ARG ALPINE_VERSION=[0-9].*/ARG ALPINE_VERSION=${NEW_VERSION}/" Dockerfile
+          sed -i "s/^ARG ALPINE_DIGEST=sha256:.*/ARG ALPINE_DIGEST=${NEW_DIGEST}/" Dockerfile
           # shellcheck disable=SC2016
           sed -i "s/ALPINE_VERSION: \${ALPINE_VERSION:-${OLD_VERSION}}/ALPINE_VERSION: \${ALPINE_VERSION:-${NEW_VERSION}}/" examples/docker-compose.yml
+          # shellcheck disable=SC2016
+          sed -i "s/ALPINE_DIGEST: \${ALPINE_DIGEST:-${OLD_DIGEST}}/ALPINE_DIGEST: \${ALPINE_DIGEST:-${NEW_DIGEST}}/" examples/docker-compose.yml
+
+          lts_revision="$(scripts/bump-image-revision.sh versions/openldap-lts.env bump)"
+          stable_revision="$(scripts/bump-image-revision.sh versions/openldap-stable.env bump)"
+          sed -i "s/^ARG IMAGE_REVISION=.*/ARG IMAGE_REVISION=${lts_revision}/" Dockerfile
+          # shellcheck disable=SC2016
+          sed -i "s/IMAGE_REVISION: \${IMAGE_REVISION:-${old_lts_revision}}/IMAGE_REVISION: \${IMAGE_REVISION:-${lts_revision}}/" examples/docker-compose.yml
+          {
+            echo "lts_revision=${lts_revision}"
+            echo "stable_revision=${stable_revision}"
+          } >> "$GITHUB_OUTPUT"
+
+          export LTS_VERSION="$lts_version"
+          export OLD_LTS_REVISION="$old_lts_revision"
+          export NEW_LTS_REVISION="$lts_revision"
+          export STABLE_VERSION="$stable_version"
+          export OLD_STABLE_REVISION="$old_stable_revision"
+          export NEW_STABLE_REVISION="$stable_revision"
 
           # shellcheck disable=SC2016
           ruby -e '
             readme = File.read("README.md")
             readme.gsub!("alpine:" + ENV.fetch("OLD_VERSION"), "alpine:" + ENV.fetch("NEW_VERSION"))
             readme.gsub!("Alpine `" + ENV.fetch("OLD_VERSION") + "`", "Alpine `" + ENV.fetch("NEW_VERSION") + "`")
+            readme.gsub!(ENV.fetch("OLD_DIGEST"), ENV.fetch("NEW_DIGEST"))
+            readme.gsub!(ENV.fetch("LTS_VERSION") + "-r" + ENV.fetch("OLD_LTS_REVISION"), ENV.fetch("LTS_VERSION") + "-r" + ENV.fetch("NEW_LTS_REVISION"))
+            readme.gsub!(ENV.fetch("STABLE_VERSION") + "-r" + ENV.fetch("OLD_STABLE_REVISION"), ENV.fetch("STABLE_VERSION") + "-r" + ENV.fetch("NEW_STABLE_REVISION"))
             File.write("README.md", readme)
           '
 
@@ -266,13 +342,16 @@ jobs:
           commit-message: ${{ steps.upstream.outputs.pr_title }}
           title: ${{ steps.upstream.outputs.pr_title }}
           body: |
-            This automated PR updates only the Alpine stable minor used by both OpenLDAP channels.
+            This automated PR updates the Alpine stable image used by both OpenLDAP channels and increments both image revisions.
 
-            - Current minor: `${{ steps.upstream.outputs.current_version }}`
-            - Latest stable minor: `${{ steps.upstream.outputs.latest_version }}`
+            - Current image: `${{ steps.upstream.outputs.current_version }}@${{ steps.upstream.outputs.current_digest }}`
+            - Latest image: `${{ steps.upstream.outputs.latest_version }}@${{ steps.upstream.outputs.latest_digest }}`
+            - Change type: `${{ steps.upstream.outputs.change_kind }}`
+            - LTS image revision: `r${{ steps.update.outputs.lts_revision }}`
+            - Stable image revision: `r${{ steps.update.outputs.stable_revision }}`
             - Metadata: ${{ steps.upstream.outputs.metadata_url }}
 
-            Patch-level Alpine updates are picked up by the scheduled image rebuild with `pull: true`.
+            Merging this PR publishes new immutable `-rX` tags for both channels.
           assignees: croessner
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>

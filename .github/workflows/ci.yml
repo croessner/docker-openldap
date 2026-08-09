@@ -50,9 +50,11 @@ jobs:
           source "versions/openldap-${CHANNEL}.env"
           {
             echo "alpine_version=${ALPINE_VERSION}"
+            echo "alpine_digest=${ALPINE_DIGEST}"
             echo "openldap_channel=${OPENLDAP_CHANNEL}"
             echo "openldap_version=${OPENLDAP_VERSION}"
             echo "openldap_sha256=${OPENLDAP_SHA256}"
+            echo "image_revision=${IMAGE_REVISION}"
           } >> "$GITHUB_OUTPUT"
 
       - name: Build native test image
@@ -65,9 +67,11 @@ jobs:
           tags: openldap-ci:${{ matrix.channel }}
           build-args: |
             ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
+            ALPINE_DIGEST=${{ steps.versions.outputs.alpine_digest }}
             OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
             OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
             OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
+            IMAGE_REVISION=${{ steps.versions.outputs.image_revision }}
           cache-from: type=gha,scope=openldap-${{ matrix.channel }}
           cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
 
@@ -78,5 +82,6 @@ jobs:
 
           test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.channel" }}')" = '${{ matrix.channel }}'
           test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.version" }}')" = '${{ steps.versions.outputs.openldap_version }}'
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.image-revision" }}')" = '${{ steps.versions.outputs.image_revision }}'
           docker run --rm --entrypoint slapd openldap-ci:${{ matrix.channel }} -VV
           tests/smoke-image.sh openldap-ci:${{ matrix.channel }} '${{ matrix.channel }}'
