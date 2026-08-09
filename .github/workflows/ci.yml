@@ -1,0 +1,82 @@
+name: Validate Images
+
+on:
+  pull_request:
+  workflow_dispatch:
+
+env:
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+
+permissions:
+  contents: read
+
+jobs:
+  release-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Validate release channels and tags
+        run: tests/check-release-contract.sh
+
+  build:
+    name: Build OpenLDAP ${{ matrix.channel }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - lts
+          - stable
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v4
+
+      - name: Read version pins
+        id: versions
+        shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
+        run: |
+          set -euo pipefail
+
+          source versions/alpine.env
+          # shellcheck disable=SC1090
+          source "versions/openldap-${CHANNEL}.env"
+          {
+            echo "alpine_version=${ALPINE_VERSION}"
+            echo "openldap_channel=${OPENLDAP_CHANNEL}"
+            echo "openldap_version=${OPENLDAP_VERSION}"
+            echo "openldap_sha256=${OPENLDAP_SHA256}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Build native test image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./Dockerfile
+          load: true
+          pull: true
+          tags: openldap-ci:${{ matrix.channel }}
+          build-args: |
+            ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
+            OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
+            OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
+            OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
+          cache-from: type=gha,scope=openldap-${{ matrix.channel }}
+          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
+
+      - name: Verify labels and runtime contract
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.channel" }}')" = '${{ matrix.channel }}'
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.version" }}')" = '${{ steps.versions.outputs.openldap_version }}'
+          docker run --rm --entrypoint slapd openldap-ci:${{ matrix.channel }} -VV
+          tests/smoke-image.sh openldap-ci:${{ matrix.channel }} '${{ matrix.channel }}'

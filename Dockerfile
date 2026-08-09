@@ -2,9 +2,10 @@
 ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 
-ARG ALPINE_VERSION=3.23
-ARG OPENLDAP_VERSION=2.6.13
-ARG OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656
+ARG ALPINE_VERSION=3.24
+ARG OPENLDAP_CHANNEL=lts
+ARG OPENLDAP_VERSION=2.6.14
+ARG OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107
 ARG OCI_SOURCE="https://github.com/croessner/docker-openldap"
 ARG OCI_URL="https://hub.docker.com/r/chrroessner/openldap"
 ARG OCI_DOCUMENTATION="https://github.com/croessner/docker-openldap#readme"
@@ -35,8 +36,10 @@ RUN apk upgrade --no-cache \
         libtool \
         openssl-dev \
         tar \
-        unixodbc-dev \
-        util-linux-dev
+        util-linux-dev \
+    && case "${OPENLDAP_VERSION}" in \
+         2.6.*) apk add --no-cache unixodbc-dev ;; \
+       esac
 
 WORKDIR /tmp/build
 
@@ -49,7 +52,7 @@ RUN curl -fsSLo openldap.tgz "https://www.openldap.org/software/download/OpenLDA
 
 WORKDIR /tmp/build/src
 
-RUN ./configure \
+RUN set -- \
         --prefix=/usr \
         --sbindir=/usr/sbin \
         --sysconfdir=/etc/openldap \
@@ -59,13 +62,15 @@ RUN ./configure \
         --enable-modules \
         --enable-backends=mod \
         --enable-overlays=mod \
-        --enable-sql=mod \
         --enable-argon2 \
         --with-tls=openssl \
         --with-cyrus-sasl \
         --enable-syslog \
-        --disable-perl \
         --disable-wt \
+    && case "${OPENLDAP_VERSION}" in \
+         2.6.*) set -- "$@" --enable-sql=mod --disable-perl ;; \
+       esac \
+    && ./configure "$@" \
     && make depend \
     && make -j"$(getconf _NPROCESSORS_ONLN)" \
     && DESTDIR=/tmp/out make install \
@@ -85,7 +90,9 @@ RUN ./configure \
 
 FROM --platform=$TARGETPLATFORM alpine:${ALPINE_VERSION}
 
+ARG ALPINE_VERSION
 ARG OPENLDAP_VERSION
+ARG OPENLDAP_CHANNEL
 ARG OCI_SOURCE
 ARG OCI_URL
 ARG OCI_DOCUMENTATION
@@ -107,7 +114,8 @@ LABEL maintainer="Christian Rößner <christian@roessner.email>" \
       org.opencontainers.image.version="${OCI_VERSION}" \
       org.opencontainers.image.revision="${OCI_REVISION}" \
       org.opencontainers.image.base.name="docker.io/library/alpine:${ALPINE_VERSION}" \
-      io.roessner.openldap.version="${OPENLDAP_VERSION}"
+      io.roessner.openldap.version="${OPENLDAP_VERSION}" \
+      io.roessner.openldap.channel="${OPENLDAP_CHANNEL}"
 
 RUN apk upgrade --no-cache \
     && apk add --no-cache \
@@ -118,7 +126,9 @@ RUN apk upgrade --no-cache \
         libuuid \
         openssl \
         su-exec \
-        unixodbc \
+    && case "${OPENLDAP_VERSION}" in \
+         2.6.*) apk add --no-cache unixodbc ;; \
+       esac \
     && addgroup -S ldap \
     && adduser -S -D -H -h /var/lib/openldap -s /sbin/nologin -G ldap ldap \
     && mkdir -p \

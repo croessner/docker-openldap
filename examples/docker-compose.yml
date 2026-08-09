@@ -2,6 +2,11 @@ services:
   openldap:
     build:
       context: ..
+      args:
+        ALPINE_VERSION: ${ALPINE_VERSION:-3.24}
+        OPENLDAP_CHANNEL: ${OPENLDAP_CHANNEL:-lts}
+        OPENLDAP_VERSION: ${OPENLDAP_VERSION:-2.6.14}
+        OPENLDAP_SHA256: ${OPENLDAP_SHA256:-806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107}
     image: ${IMAGE_NAME:-openldap}:${TAG:-latest}
     container_name: openldap
     restart: unless-stopped

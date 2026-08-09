@@ -1,4 +1,4 @@
-name: Check OpenLDAP Upstream
+name: Check Upstream Releases
 
 on:
   schedule:
@@ -14,59 +14,84 @@ permissions:
   pull-requests: write
 
 concurrency:
-  group: openldap-upstream-check
+  group: upstream-release-check
   cancel-in-progress: false
 
 jobs:
-  check:
+  check-openldap:
+    name: Check OpenLDAP ${{ matrix.channel }}
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - channel: lts
+            release_marker: Long Term Support Release
+            manifest: versions/openldap-lts.env
+            branch: automation/openldap-lts
+          - channel: stable
+            release_marker: Feature Release
+            manifest: versions/openldap-stable.env
+            branch: automation/openldap-stable
 
     steps:
       - name: Check out repository
         uses: actions/checkout@v6
 
-      - name: Detect latest upstream release
+      - name: Detect current OpenLDAP release
         id: upstream
         shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          MANIFEST: ${{ matrix.manifest }}
+          RELEASE_MARKER: ${{ matrix.release_marker }}
         run: |
           set -euo pipefail
 
+          # shellcheck disable=SC1090
+          source "$MANIFEST"
+          current_version="$OPENLDAP_VERSION"
+          current_sha256="$OPENLDAP_SHA256"
+          download_page_url="https://www.openldap.org/software/download/"
           release_index_url="https://www.openldap.org/software/download/OpenLDAP/openldap-release/"
-          current_version="$(sed -n 's/^ARG OPENLDAP_VERSION=//p' Dockerfile | head -n1)"
-          current_sha256="$(sed -n 's/^ARG OPENLDAP_SHA256=//p' Dockerfile | head -n1)"
 
           latest_version="$(
-            curl -fsSL "$release_index_url" |
-              grep -o 'openldap-[0-9][0-9.]*\.tgz' |
-              sed 's/^openldap-//; s/\.tgz$//' |
-              sort -uV |
-              tail -n1
+            curl -fsSL "$download_page_url" |
+              sed -n "s/.*>${RELEASE_MARKER}<\\/SPAN>, OpenLDAP-\\([0-9.]*\\):.*/\\1/p" |
+              head -n1
           )"
+
+          if [[ ! "$latest_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not determine the current OpenLDAP ${CHANNEL} release" >&2
+            exit 1
+          fi
 
           tarball_url="${release_index_url}openldap-${latest_version}.tgz"
           sha3_url="${release_index_url}openldap-${latest_version}.sha3-512"
+          tarball="${RUNNER_TEMP}/openldap-${CHANNEL}.tgz"
+          sha3_file="${RUNNER_TEMP}/openldap-${CHANNEL}.sha3-512"
 
-          curl -fsSL "$tarball_url" -o /tmp/openldap.tgz
-          latest_sha256="$(sha256sum /tmp/openldap.tgz | awk '{print $1}')"
+          curl -fsSL "$tarball_url" -o "$tarball"
+          latest_sha256="$(sha256sum "$tarball" | awk '{print $1}')"
 
-          if curl -fsSL "$sha3_url" -o /tmp/openldap.sha3-512; then
-            expected_sha3="$(sed 's/^.*= //' /tmp/openldap.sha3-512 | tr '[:upper:]' '[:lower:]')"
-            actual_sha3="$(openssl dgst -sha3-512 /tmp/openldap.tgz | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')"
+          if curl -fsSL "$sha3_url" -o "$sha3_file"; then
+            expected_sha3="$(sed 's/^.*= //' "$sha3_file" | tr '[:upper:]' '[:lower:]')"
+            actual_sha3="$(openssl dgst -sha3-512 "$tarball" | awk '{print $NF}' | tr '[:upper:]' '[:lower:]')"
             [ "$expected_sha3" = "$actual_sha3" ]
           fi
 
           update_needed=false
-          change_kind="none"
-          pr_title="chore: no upstream OpenLDAP update needed"
+          change_kind=none
+          pr_title="chore: no OpenLDAP ${CHANNEL} update needed"
 
           if [ "$latest_version" != "$current_version" ]; then
             update_needed=true
-            change_kind="version"
-            pr_title="chore: bump OpenLDAP to ${latest_version}"
+            change_kind=version
+            pr_title="chore: bump OpenLDAP ${CHANNEL} to ${latest_version}"
           elif [ "$latest_sha256" != "$current_sha256" ]; then
             update_needed=true
-            change_kind="checksum"
-            pr_title="chore: refresh OpenLDAP ${current_version} checksum"
+            change_kind=checksum
+            pr_title="chore: refresh OpenLDAP ${CHANNEL} ${current_version} checksum"
           fi
 
           {
@@ -81,67 +106,173 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
           {
-            echo "### OpenLDAP upstream check"
-            echo ""
-            echo "- Current pinned version: \`${current_version}\`"
-            echo "- Latest upstream version: \`${latest_version}\`"
-            echo "- Current pinned SHA256: \`${current_sha256}\`"
-            echo "- Latest upstream SHA256: \`${latest_sha256}\`"
-            echo "- Tarball: ${tarball_url}"
+            echo "### OpenLDAP ${CHANNEL} upstream check"
+            echo
+            echo "- Current pin: \`${current_version}\`"
+            echo "- Upstream release: \`${latest_version}\`"
             echo "- Update needed: \`${update_needed}\`"
+            echo "- Tarball: ${tarball_url}"
           } >> "$GITHUB_STEP_SUMMARY"
 
-      - name: Update pinned files
+      - name: Update OpenLDAP pin
         if: steps.upstream.outputs.update_needed == 'true'
         shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          MANIFEST: ${{ matrix.manifest }}
+          OLD_VERSION: ${{ steps.upstream.outputs.current_version }}
+          OLD_SHA256: ${{ steps.upstream.outputs.current_sha256 }}
+          NEW_VERSION: ${{ steps.upstream.outputs.latest_version }}
+          NEW_SHA256: ${{ steps.upstream.outputs.latest_sha256 }}
         run: |
           set -euo pipefail
 
-          old_version="${{ steps.upstream.outputs.current_version }}"
-          old_sha256="${{ steps.upstream.outputs.current_sha256 }}"
-          new_version="${{ steps.upstream.outputs.latest_version }}"
-          new_sha256="${{ steps.upstream.outputs.latest_sha256 }}"
+          sed -i "s/^OPENLDAP_VERSION=.*/OPENLDAP_VERSION=${NEW_VERSION}/" "$MANIFEST"
+          sed -i "s/^OPENLDAP_SHA256=.*/OPENLDAP_SHA256=${NEW_SHA256}/" "$MANIFEST"
 
-          sed -i "s/^ARG OPENLDAP_VERSION=.*/ARG OPENLDAP_VERSION=${new_version}/" Dockerfile
-          sed -i "s/^ARG OPENLDAP_SHA256=.*/ARG OPENLDAP_SHA256=${new_sha256}/" Dockerfile
-
-          OLD_VERSION="$old_version" \
-          NEW_VERSION="$new_version" \
-          OLD_SHA256="$old_sha256" \
-          NEW_SHA256="$new_sha256" \
+          # shellcheck disable=SC2016
           ruby -e '
             readme = File.read("README.md")
-            readme.gsub!(ENV.fetch("OLD_VERSION"), ENV.fetch("NEW_VERSION"))
+            old_version = ENV.fetch("OLD_VERSION")
+            new_version = ENV.fetch("NEW_VERSION")
+            channel = ENV.fetch("CHANNEL")
+            old_series = old_version.split(".")[0, 2].join(".")
+            new_series = new_version.split(".")[0, 2].join(".")
+
+            readme.gsub!(old_version, new_version)
             readme.gsub!(ENV.fetch("OLD_SHA256"), ENV.fetch("NEW_SHA256"))
+
+            if old_series != new_series
+              readme.gsub!("CHANNEL=#{channel} TAG=#{old_series}-#{channel}", "CHANNEL=#{channel} TAG=#{new_series}-#{channel}")
+              if channel == "lts"
+                readme.gsub!("OpenLDAP #{old_series} LTS", "OpenLDAP #{new_series} LTS")
+                readme.gsub!("`#{old_series}`, `#{old_series}-lts`", "`#{new_series}`, `#{new_series}-lts`")
+              else
+                readme.gsub!("OpenLDAP #{old_series} feature/stable", "OpenLDAP #{new_series} feature/stable")
+                readme.gsub!("`#{old_series}`, `#{old_series}-stable`", "`#{new_series}`, `#{new_series}-stable`")
+              end
+            end
+
             File.write("README.md", readme)
           '
 
-      - name: Create or update pull request
+          if [ "$CHANNEL" = lts ]; then
+            sed -i "s/^ARG OPENLDAP_VERSION=.*/ARG OPENLDAP_VERSION=${NEW_VERSION}/" Dockerfile
+            sed -i "s/^ARG OPENLDAP_SHA256=.*/ARG OPENLDAP_SHA256=${NEW_SHA256}/" Dockerfile
+            sed -i "s/OPENLDAP_VERSION: \${OPENLDAP_VERSION:-${OLD_VERSION}}/OPENLDAP_VERSION: \${OPENLDAP_VERSION:-${NEW_VERSION}}/" examples/docker-compose.yml
+            sed -i "s/OPENLDAP_SHA256: \${OPENLDAP_SHA256:-${OLD_SHA256}}/OPENLDAP_SHA256: \${OPENLDAP_SHA256:-${NEW_SHA256}}/" examples/docker-compose.yml
+          fi
+
+      - name: Create or update OpenLDAP pull request
         if: steps.upstream.outputs.update_needed == 'true'
         uses: peter-evans/create-pull-request@v8
         with:
-          branch: automation/openldap-upstream
+          branch: ${{ matrix.branch }}
           delete-branch: true
           commit-message: ${{ steps.upstream.outputs.pr_title }}
           title: ${{ steps.upstream.outputs.pr_title }}
           body: |
-            This automated PR updates the pinned OpenLDAP release used by this repository.
+            This automated PR updates only the OpenLDAP `${{ matrix.channel }}` channel.
 
-            Summary:
-            - Current pinned version: `${{ steps.upstream.outputs.current_version }}`
-            - Latest upstream version: `${{ steps.upstream.outputs.latest_version }}`
-            - Latest upstream tarball: `${{ steps.upstream.outputs.tarball_url }}`
+            - Current pin: `${{ steps.upstream.outputs.current_version }}`
+            - Upstream release: `${{ steps.upstream.outputs.latest_version }}`
+            - Tarball: ${{ steps.upstream.outputs.tarball_url }}
             - Change type: `${{ steps.upstream.outputs.change_kind }}`
 
-            Updated files:
-            - `Dockerfile`
-            - `README.md`
+            The LTS and feature/stable channels are intentionally handled by separate jobs and branches.
+          assignees: croessner
+          author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
+          committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
 
-            Sources:
-            - https://www.openldap.org/software/
-            - ${{ steps.upstream.outputs.tarball_url }}
+  check-alpine:
+    name: Check Alpine stable
+    runs-on: ubuntu-latest
 
-            This PR was generated by `.github/workflows/openldap-upstream-check.yml`.
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v6
+
+      - name: Detect current Alpine stable branch
+        id: upstream
+        shell: bash
+        run: |
+          set -euo pipefail
+
+          source versions/alpine.env
+          current_version="$ALPINE_VERSION"
+          metadata_url="https://dl-cdn.alpinelinux.org/alpine/latest-stable/releases/x86_64/latest-releases.yaml"
+          latest_version="$(
+            curl -fsSL "$metadata_url" |
+              sed -n 's/^  branch: v\([0-9][0-9.]*\)$/\1/p' |
+              head -n1
+          )"
+
+          if [[ ! "$latest_version" =~ ^[0-9]+\.[0-9]+$ ]]; then
+            echo "Could not determine the current Alpine stable branch" >&2
+            exit 1
+          fi
+
+          update_needed=false
+          pr_title="chore: no Alpine update needed"
+          if [ "$latest_version" != "$current_version" ]; then
+            update_needed=true
+            pr_title="chore: bump Alpine to ${latest_version}"
+          fi
+
+          {
+            echo "current_version=${current_version}"
+            echo "latest_version=${latest_version}"
+            echo "metadata_url=${metadata_url}"
+            echo "update_needed=${update_needed}"
+            echo "pr_title=${pr_title}"
+          } >> "$GITHUB_OUTPUT"
+
+          {
+            echo "### Alpine stable upstream check"
+            echo
+            echo "- Current minor: \`${current_version}\`"
+            echo "- Latest stable minor: \`${latest_version}\`"
+            echo "- Update needed: \`${update_needed}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Update Alpine pin
+        if: steps.upstream.outputs.update_needed == 'true'
+        shell: bash
+        env:
+          OLD_VERSION: ${{ steps.upstream.outputs.current_version }}
+          NEW_VERSION: ${{ steps.upstream.outputs.latest_version }}
+        run: |
+          set -euo pipefail
+
+          sed -i "s/^ALPINE_VERSION=.*/ALPINE_VERSION=${NEW_VERSION}/" versions/alpine.env
+          sed -i "s/^ARG ALPINE_VERSION=.*/ARG ALPINE_VERSION=${NEW_VERSION}/" Dockerfile
+          # shellcheck disable=SC2016
+          sed -i "s/ALPINE_VERSION: \${ALPINE_VERSION:-${OLD_VERSION}}/ALPINE_VERSION: \${ALPINE_VERSION:-${NEW_VERSION}}/" examples/docker-compose.yml
+
+          # shellcheck disable=SC2016
+          ruby -e '
+            readme = File.read("README.md")
+            readme.gsub!("alpine:" + ENV.fetch("OLD_VERSION"), "alpine:" + ENV.fetch("NEW_VERSION"))
+            readme.gsub!("Alpine `" + ENV.fetch("OLD_VERSION") + "`", "Alpine `" + ENV.fetch("NEW_VERSION") + "`")
+            File.write("README.md", readme)
+          '
+
+      - name: Create or update Alpine pull request
+        if: steps.upstream.outputs.update_needed == 'true'
+        uses: peter-evans/create-pull-request@v8
+        with:
+          branch: automation/alpine-stable
+          delete-branch: true
+          commit-message: ${{ steps.upstream.outputs.pr_title }}
+          title: ${{ steps.upstream.outputs.pr_title }}
+          body: |
+            This automated PR updates only the Alpine stable minor used by both OpenLDAP channels.
+
+            - Current minor: `${{ steps.upstream.outputs.current_version }}`
+            - Latest stable minor: `${{ steps.upstream.outputs.latest_version }}`
+            - Metadata: ${{ steps.upstream.outputs.metadata_url }}
+
+            Patch-level Alpine updates are picked up by the scheduled image rebuild with `pull: true`.
           assignees: croessner
           author: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>
           committer: github-actions[bot] <41898282+github-actions[bot]@users.noreply.github.com>

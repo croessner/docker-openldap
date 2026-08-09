@@ -1,4 +1,4 @@
-name: Publish Docker Image
+name: Publish Docker Images
 
 on:
   push:
@@ -17,9 +17,16 @@ env:
 
 jobs:
   docker:
+    name: Publish OpenLDAP ${{ matrix.channel }}
     runs-on: ubuntu-latest
     permissions:
       contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        channel:
+          - lts
+          - stable
 
     steps:
       - name: Check out repository
@@ -39,36 +46,46 @@ jobs:
 
       - name: Extract release versions
         id: versions
+        shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
         run: |
-          set -eu
-          openldap_version=$(sed -n 's/^ARG OPENLDAP_VERSION=//p' Dockerfile | head -n1)
-          alpine_version=$(sed -n 's/^ARG ALPINE_VERSION=//p' Dockerfile | head -n1)
+          set -euo pipefail
+
+          source versions/alpine.env
+          # shellcheck disable=SC1090
+          source "versions/openldap-${CHANNEL}.env"
           release_tag=""
-          if [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-            release_tag="${GITHUB_REF_NAME#v}"
+
+          if [ "${GITHUB_REF_TYPE}" = tag ]; then
+            candidate="${GITHUB_REF_NAME#v}"
+            case "$candidate" in
+              "${OPENLDAP_VERSION}"-r*) release_tag="$candidate" ;;
+            esac
           fi
 
-          image_version="${release_tag:-$openldap_version}"
-
-          printf 'openldap_version=%s\n' "$openldap_version" >> "$GITHUB_OUTPUT"
-          printf 'alpine_version=%s\n' "$alpine_version" >> "$GITHUB_OUTPUT"
-          printf 'release_tag=%s\n' "$release_tag" >> "$GITHUB_OUTPUT"
-          printf 'image_version=%s\n' "$image_version" >> "$GITHUB_OUTPUT"
+          {
+            echo "alpine_version=${ALPINE_VERSION}"
+            echo "openldap_channel=${OPENLDAP_CHANNEL}"
+            echo "openldap_version=${OPENLDAP_VERSION}"
+            echo "openldap_sha256=${OPENLDAP_SHA256}"
+            echo "release_tag=${release_tag}"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Prepare Docker tags
         id: docker_tags
+        shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
+          VERSION: ${{ steps.versions.outputs.openldap_version }}
+          ALPINE_VERSION: ${{ steps.versions.outputs.alpine_version }}
+          RELEASE_TAG: ${{ steps.versions.outputs.release_tag }}
         run: |
-          set -eu
+          set -euo pipefail
+
           {
             echo 'tags<<EOF'
-            echo "${IMAGE_NAME}:${{ steps.versions.outputs.openldap_version }}"
-            echo "${IMAGE_NAME}:${{ steps.versions.outputs.openldap_version }}-alpine${{ steps.versions.outputs.alpine_version }}"
-            if [ -n "${{ steps.versions.outputs.release_tag }}" ]; then
-              echo "${IMAGE_NAME}:${{ steps.versions.outputs.release_tag }}"
-            fi
-            if [ "${GITHUB_REF_NAME}" = "main" ] || [ "${GITHUB_REF_NAME}" = "master" ] || [ "${GITHUB_REF_TYPE}" = "tag" ]; then
-              echo "${IMAGE_NAME}:latest"
-            fi
+            scripts/docker-tags.sh "$IMAGE_NAME" "$CHANNEL" "$VERSION" "$ALPINE_VERSION" "$RELEASE_TAG"
             echo 'EOF'
           } >> "$GITHUB_OUTPUT"
 
@@ -82,10 +99,14 @@ jobs:
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
+            ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
+            OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
+            OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
+            OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
             OCI_SOURCE=${{ github.server_url }}/${{ github.repository }}
             OCI_URL=https://hub.docker.com/r/chrroessner/openldap
             OCI_DOCUMENTATION=${{ github.server_url }}/${{ github.repository }}#readme
-            OCI_VERSION=${{ steps.versions.outputs.image_version }}
+            OCI_VERSION=${{ steps.versions.outputs.openldap_version }}
             OCI_REVISION=${{ github.sha }}
           tags: ${{ steps.docker_tags.outputs.tags }}
           labels: |
@@ -97,38 +118,43 @@ jobs:
             org.opencontainers.image.source=${{ github.server_url }}/${{ github.repository }}
             org.opencontainers.image.url=https://hub.docker.com/r/chrroessner/openldap
             org.opencontainers.image.documentation=${{ github.server_url }}/${{ github.repository }}#readme
-            org.opencontainers.image.version=${{ steps.versions.outputs.image_version }}
+            org.opencontainers.image.version=${{ steps.versions.outputs.openldap_version }}
             org.opencontainers.image.revision=${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+            io.roessner.openldap.channel=${{ steps.versions.outputs.openldap_channel }}
+          cache-from: type=gha,scope=openldap-${{ matrix.channel }}
+          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
           attests: |
             type=provenance,mode=max
             type=sbom
 
       - name: Export SBOM files
+        shell: bash
+        env:
+          CHANNEL: ${{ matrix.channel }}
         run: |
-          set -eu
+          set -euo pipefail
+
           mkdir -p dist/sbom
           image_ref="${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
           docker buildx imagetools inspect "$image_ref" \
             --format '{{ json (index .SBOM "linux/amd64").SPDX }}' \
-            > dist/sbom/openldap-linux-amd64.spdx.json
+            > "dist/sbom/openldap-${CHANNEL}-linux-amd64.spdx.json"
           docker buildx imagetools inspect "$image_ref" \
             --format '{{ json (index .SBOM "linux/arm64").SPDX }}' \
-            > dist/sbom/openldap-linux-arm64.spdx.json
+            > "dist/sbom/openldap-${CHANNEL}-linux-arm64.spdx.json"
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: openldap-sbom-${{ github.run_id }}
+          name: openldap-${{ matrix.channel }}-sbom-${{ github.run_id }}
           path: dist/sbom/*.json
           if-no-files-found: error
 
       - name: Sync Docker Hub description
-        if: github.ref == 'refs/heads/main'
+        if: github.ref == 'refs/heads/main' && matrix.channel == 'lts'
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: chrroessner/openldap
-          short-description: OpenLDAP on Alpine with env bootstrap, pinned builds, and optional slapd.d mode.
+          short-description: OpenLDAP LTS and feature images on Alpine with env bootstrap and optional slapd.d mode.

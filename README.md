@@ -71,23 +71,26 @@ The image is built in two stages:
 - A **builder stage** compiles OpenLDAP from the official source tarball
 - A **runtime stage** keeps Alpine as the base image and only adds the required runtime libraries plus `su-exec`
 
-The OpenLDAP build enables dynamic modules so the image can load not only `mdb`, but also additional backends and overlays from the upstream source tree. The build also compiles the upstream `pw-sha2` contrib password module into the image. The **generated default configuration** intentionally focuses on **a clean `mdb` setup**. For special cases, you can load additional modules, provide your own `slapd.conf`, or persist `slapd.d` as the runtime source of truth.
+The OpenLDAP build enables dynamic modules so the image can load not only `mdb`, but also additional backends and overlays from the selected upstream release. The 2.6 LTS channel includes `back-sql` and its ODBC runtime; OpenLDAP removed `back-sql` and `back-perl` from 2.7, so the stable channel intentionally does not contain them. The build also compiles the upstream `pw-sha2` contrib password module into the image. The **generated default configuration** intentionally focuses on **a clean `mdb` setup**. For special cases, you can load additional modules, provide your own `slapd.conf`, or persist `slapd.d` as the runtime source of truth.
 
 ## Quick Start
 
 ### 1. Build
 
 ```bash
-docker build -t openldap .
+make build CHANNEL=lts TAG=2.6-lts
+make build CHANNEL=stable TAG=2.7-stable
 ```
 
-To pin a specific upstream release explicitly:
+The default channel is `lts`. A direct `docker build` without build arguments therefore also builds the current LTS pin. To pin a specific upstream release explicitly:
 
 ```bash
 docker build \
-  --build-arg OPENLDAP_VERSION=2.6.13 \
-  --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap:2.6.13 .
+  --build-arg ALPINE_VERSION=3.24 \
+  --build-arg OPENLDAP_CHANNEL=lts \
+  --build-arg OPENLDAP_VERSION=2.6.14 \
+  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
+  -t openldap:2.6.14 .
 ```
 
 Multi-arch build with `buildx`:
@@ -95,9 +98,11 @@ Multi-arch build with `buildx`:
 ```bash
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg OPENLDAP_VERSION=2.6.13 \
-  --build-arg OPENLDAP_SHA256=d693b49517a42efb85a1a364a310aed16a53d428d1b46c0d31ef3fba78fcb656 \
-  -t openldap:2.6.13 \
+  --build-arg ALPINE_VERSION=3.24 \
+  --build-arg OPENLDAP_CHANNEL=lts \
+  --build-arg OPENLDAP_VERSION=2.6.14 \
+  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
+  -t openldap:2.6.14 \
   .
 ```
 
@@ -105,7 +110,8 @@ Publish to your own Docker Hub namespace:
 
 ```bash
 docker login
-make push IMAGE_NAME=<your-namespace>/openldap TAG=latest
+make push CHANNEL=lts IMAGE_NAME=<your-namespace>/openldap TAG=2.6-lts
+make push CHANNEL=stable IMAGE_NAME=<your-namespace>/openldap TAG=2.7-stable
 ```
 
 Create a local SBOM export:
@@ -141,7 +147,15 @@ ldapsearch -x -H ldap://127.0.0.1:389 -b dc=example,dc=org -D "cn=admin,dc=examp
 
 This repository includes a GitHub Actions workflow at `.github/workflows/docker-publish.yml` that publishes the maintainer image to Docker Hub as `chrroessner/openldap`.
 
-It also includes `.github/workflows/openldap-upstream-check.yml`, which runs daily, checks the official OpenLDAP release directory for a newer upstream tarball, refreshes the pinned SHA256, and opens or updates a pull request automatically when the pinned version in this repository is behind upstream.
+It also includes `.github/workflows/openldap-upstream-check.yml`, which runs daily and tracks three upstream streams independently:
+
+- the current OpenLDAP Long Term Support Release in `versions/openldap-lts.env`
+- the current OpenLDAP Feature Release in `versions/openldap-stable.env`
+- the current Alpine stable minor in `versions/alpine.env`
+
+Each stream uses its own pull-request branch (`automation/openldap-lts`, `automation/openldap-stable`, and `automation/alpine-stable`). A new feature release can therefore no longer overwrite an LTS update PR.
+
+Every pull request runs `.github/workflows/ci.yml`: it verifies the release/tag contract, builds both channels, checks their labels and modules, and performs an isolated LDAPI health smoke test. The contract test explicitly rejects `latest` in the stable channel.
 
 If you fork this repository, adjust the workflow image name and use your own Docker Hub namespace. The example push commands in this README intentionally use `<your-namespace>/openldap` for that reason.
 
@@ -150,10 +164,19 @@ The workflow runs:
 - on pushes to `main`
 - on pushes to `master`
 - on Git tags matching `v*`
-- every Monday via `schedule`
+- daily via `schedule`
 - manually via `workflow_dispatch`
 
-The scheduled run uses `docker/build-push-action` with `pull: true`. That means a rebuild will automatically pick up a newer digest for the pinned Alpine minor tag in the Dockerfile, for example `alpine:3.23`.
+The publish job builds both OpenLDAP channels. Its scheduled run uses `docker/build-push-action` with `pull: true`, so patch-level Alpine updates are picked up automatically for the pinned minor tag, currently `alpine:3.24`. A new Alpine minor is proposed separately by the upstream-check workflow.
+
+Published tag policy:
+
+| Channel | Moving tags | Exact tag | Compatibility |
+|---|---|---|---|
+| OpenLDAP 2.6 LTS | `latest`, `lts`, `2.6`, `2.6-lts` | `2.6.14` | Existing 2.6 MDB volumes remain on the LTS line |
+| OpenLDAP 2.7 feature/stable | `stable`, `2.7`, `2.7-stable` | `2.7.0` | Requires the documented 2.6-to-2.7 MDB export/import |
+
+Both channels also publish an exact Alpine-qualified tag such as `2.6.14-alpine3.24`. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
 
 SBOM is integrated in three places:
 
@@ -170,13 +193,9 @@ Recommended Docker Hub setup:
 
 - create a public repository in your own namespace, for example `<your-namespace>/openldap`
 - create a Docker Hub access token dedicated to CI
-- keep `latest` for the default branch
-- publish release tags in the form `v<openldap-version>-r<revision>`, for example `v2.6.13-r1`
-
-Important limitation:
-
-- this does not automatically jump from Alpine `3.23` to `3.24`
-- for a new Alpine minor release, update `ALPINE_VERSION` in `Dockerfile`
+- keep `latest` on the LTS channel
+- use `stable` for the current OpenLDAP feature release
+- publish optional repository release tags in the form `v<openldap-version>-r<revision>`, for example `v2.6.14-r1` or `v2.7.0-r1`; the revision tag is attached only to the matching image channel
 
 Local SBOM usage:
 
@@ -194,7 +213,7 @@ make sbom-registry IMAGE_NAME=<your-namespace>/openldap TAG=latest
 Suggested first publish:
 
 ```bash
-git tag v2.6.13-r1
+git tag v2.6.14-r1
 git push origin main --tags
 ```
 
@@ -457,6 +476,8 @@ This means container health does not depend on externally reachable ports or adm
 - The default env-driven bootstrap path seeds from `slapd.conf`, but both `slapd.conf` and persistent `slapd.d` runtime modes are supported.
 - OpenLDAP is **built from source in the builder stage**; Alpine provides the runtime base image and shared runtime libraries.
 - The **default generation is tailored to `mdb`**. Other backends are available in the image, but should be configured through your own snippets or a custom `slapd.conf`.
+- OpenLDAP 2.7 uses a newer LMDB file format. Existing 2.6 MDB databases, including an enabled accesslog database, must be exported with the 2.6 `slapcat` and imported with the 2.7 `slapadd`; never point a 2.7 container directly at a 2.6 data volume.
+- OpenLDAP 2.7 removed `back-sql` and `back-perl`. Audit custom `LDAP_LOAD_MODULES`, `slapd.conf`, and persisted `slapd.d` trees before changing from the LTS to the stable channel.
 - With `LDAP_CONFIG_BACKEND=slapd.d`, a populated `LDAP_CONFIG_DIR` becomes authoritative. Environment-based config changes are then seed-only and are no longer reapplied automatically.
 - Automatic bootstrap of base entries and init LDIFs is performed only when the active runtime config was seeded from the current env-driven `slapd.conf`.
 - Automatic LDAP-based bootstrap requires `LDAP_ADMIN_PASSWORD` or `LDAP_ADMIN_PASSWORD_FILE`. `LDAP_ADMIN_PASSWORD_HASH` alone is sufficient for runtime auth, but not for first-start init operations.
@@ -469,13 +490,15 @@ This means container health does not depend on externally reachable ports or adm
 Build:
 
 ```bash
-make build
+make build CHANNEL=lts
+make build CHANNEL=stable
 ```
 
 Start via Compose:
 
 ```bash
-make compose-up
+make compose-up CHANNEL=lts
+make compose-up CHANNEL=stable
 ```
 
 Stop:
@@ -487,5 +510,6 @@ make compose-down
 ## References
 
 - OpenLDAP Admin Guide: <https://www.openldap.org/doc/admin26/>
+- OpenLDAP 2.7 release source and upgrade guide: <https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.7.0.tgz>
 - OpenLDAP Downloads: <https://www.openldap.org/software/download/OpenLDAP/>
 - Alpine Wiki OpenLDAP: <https://wiki.alpinelinux.org/wiki/Configure_OpenLDAP>
