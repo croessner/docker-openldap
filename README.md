@@ -89,10 +89,10 @@ docker build \
   --build-arg ALPINE_VERSION=3.24.1 \
   --build-arg ALPINE_DIGEST=sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
   --build-arg OPENLDAP_CHANNEL=lts \
-  --build-arg OPENLDAP_VERSION=2.6.14 \
-  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
+  --build-arg OPENLDAP_VERSION=2.6.15 \
+  --build-arg OPENLDAP_SHA256=bc91225dbfc50354033b1303bc91d1a7f6ddd1dc32fac950d79c28fe66d6bca8 \
   --build-arg IMAGE_REVISION=1 \
-  -t openldap:2.6.14-r1 .
+  -t openldap:2.6.15-r1 .
 ```
 
 Multi-arch build with `buildx`:
@@ -103,10 +103,10 @@ docker buildx build \
   --build-arg ALPINE_VERSION=3.24.1 \
   --build-arg ALPINE_DIGEST=sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
   --build-arg OPENLDAP_CHANNEL=lts \
-  --build-arg OPENLDAP_VERSION=2.6.14 \
-  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
+  --build-arg OPENLDAP_VERSION=2.6.15 \
+  --build-arg OPENLDAP_SHA256=bc91225dbfc50354033b1303bc91d1a7f6ddd1dc32fac950d79c28fe66d6bca8 \
   --build-arg IMAGE_REVISION=1 \
-  -t openldap:2.6.14-r1 \
+  -t openldap:2.6.15-r1 \
   .
 ```
 
@@ -176,10 +176,10 @@ Published tag policy:
 
 | Channel | Moving tags | Exact tag | Compatibility |
 |---|---|---|---|
-| OpenLDAP 2.6 LTS | `latest`, `lts`, `2.6`, `2.6-lts` | `2.6.14`, `2.6.14-r1` | Existing 2.6 MDB volumes remain on the LTS line |
+| OpenLDAP 2.6 LTS | `latest`, `lts`, `2.6`, `2.6-lts` | `2.6.15`, `2.6.15-r1` | Existing 2.6 MDB volumes remain on the LTS line |
 | OpenLDAP 2.7 feature/stable | `stable`, `2.7`, `2.7-stable` | `2.7.0`, `2.7.0-r1` | Requires the documented 2.6-to-2.7 MDB export/import |
 
-Both channels also publish an exact Alpine-qualified tag such as `2.6.14-alpine3.24.1`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
+Both channels also publish an exact Alpine-qualified tag such as `2.6.15-alpine3.24.1`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
 
 SBOM is integrated in three places:
 
@@ -198,7 +198,7 @@ Recommended Docker Hub setup:
 - create a Docker Hub access token dedicated to CI
 - keep `latest` on the LTS channel
 - use `stable` for the current OpenLDAP feature release
-- repository release tags may use `v<openldap-version>-r<revision>`, for example `v2.6.14-r1` or `v2.7.0-r1`; the requested revision must match the pinned channel revision
+- repository release tags may use `v<openldap-version>-r<revision>`, for example `v2.6.15-r1` or `v2.7.0-r1`; the requested revision must match the pinned channel revision
 
 Local SBOM usage:
 
@@ -216,7 +216,7 @@ make sbom-registry IMAGE_NAME=<your-namespace>/openldap TAG=latest
 Suggested first publish:
 
 ```bash
-git tag v2.6.14-r1
+git tag v2.6.15-r1
 git push origin main --tags
 ```
 
