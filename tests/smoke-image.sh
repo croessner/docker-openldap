@@ -45,7 +45,12 @@ docker run -d --rm \
 ready=false
 attempt=0
 while [ "$attempt" -lt 30 ]; do
-  if docker exec "$container_name" docker-healthcheck.sh; then
+  # Bootstrap starts a temporary slapd that also answers the health check.
+  # Wait for the entrypoint to exec the final server before testing readiness.
+  if docker exec "$container_name" /bin/sh -ec '
+    test "$(cat /proc/1/comm)" = slapd
+    docker-healthcheck.sh
+  '; then
     ready=true
     break
   fi
