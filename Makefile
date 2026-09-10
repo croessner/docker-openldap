@@ -46,6 +46,7 @@ sbom-registry:
 
 check-release-contract:
 	tests/check-release-contract.sh
+	python3 tests/check-upstream-updates.py
 
 run:
 	docker run --rm -it \

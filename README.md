@@ -82,31 +82,35 @@ make build CHANNEL=lts TAG=2.6-lts
 make build CHANNEL=stable TAG=2.7-stable
 ```
 
-The default channel is `lts`. A direct `docker build` without build arguments therefore also builds the current LTS pin. To pin a specific upstream release explicitly:
+The default channel is `lts`. A direct `docker build` without build arguments therefore also builds the current LTS pin. To build the exact checked-in pins explicitly (select either channel manifest):
 
 ```bash
+. versions/alpine.env
+. versions/openldap-lts.env
 docker build \
-  --build-arg ALPINE_VERSION=3.24.1 \
-  --build-arg ALPINE_DIGEST=sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
-  --build-arg OPENLDAP_CHANNEL=lts \
-  --build-arg OPENLDAP_VERSION=2.6.14 \
-  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
-  --build-arg IMAGE_REVISION=1 \
-  -t openldap:2.6.14-r1 .
+  --build-arg ALPINE_VERSION="$ALPINE_VERSION" \
+  --build-arg ALPINE_DIGEST="$ALPINE_DIGEST" \
+  --build-arg OPENLDAP_CHANNEL="$OPENLDAP_CHANNEL" \
+  --build-arg OPENLDAP_VERSION="$OPENLDAP_VERSION" \
+  --build-arg OPENLDAP_SHA256="$OPENLDAP_SHA256" \
+  --build-arg IMAGE_REVISION="$IMAGE_REVISION" \
+  -t "openldap:${OPENLDAP_VERSION}-r${IMAGE_REVISION}" .
 ```
 
 Multi-arch build with `buildx`:
 
 ```bash
+. versions/alpine.env
+. versions/openldap-lts.env
 docker buildx build \
   --platform linux/amd64,linux/arm64 \
-  --build-arg ALPINE_VERSION=3.24.1 \
-  --build-arg ALPINE_DIGEST=sha256:28bd5fe8b56d1bd048e5babf5b10710ebe0bae67db86916198a6eec434943f8b \
-  --build-arg OPENLDAP_CHANNEL=lts \
-  --build-arg OPENLDAP_VERSION=2.6.14 \
-  --build-arg OPENLDAP_SHA256=806dcd21d366428187fba3278da773d5930f774852c9e92517f950d585f19107 \
-  --build-arg IMAGE_REVISION=1 \
-  -t openldap:2.6.14-r1 \
+  --build-arg ALPINE_VERSION="$ALPINE_VERSION" \
+  --build-arg ALPINE_DIGEST="$ALPINE_DIGEST" \
+  --build-arg OPENLDAP_CHANNEL="$OPENLDAP_CHANNEL" \
+  --build-arg OPENLDAP_VERSION="$OPENLDAP_VERSION" \
+  --build-arg OPENLDAP_SHA256="$OPENLDAP_SHA256" \
+  --build-arg IMAGE_REVISION="$IMAGE_REVISION" \
+  -t "openldap:${OPENLDAP_VERSION}-r${IMAGE_REVISION}" \
   .
 ```
 
@@ -153,11 +157,13 @@ This repository includes a GitHub Actions workflow at `.github/workflows/docker-
 
 It also includes `.github/workflows/openldap-upstream-check.yml`, which runs daily and tracks three upstream streams independently:
 
-- the current OpenLDAP Long Term Support Release in `versions/openldap-lts.env`
-- the current OpenLDAP Feature Release in `versions/openldap-stable.env`
-- the current Alpine stable patch release and official multiarch image digest in `versions/alpine.env`
+- the current OpenLDAP Long Term Support Release in [versions/openldap-lts.env](versions/openldap-lts.env)
+- the current OpenLDAP Feature Release in [versions/openldap-stable.env](versions/openldap-stable.env)
+- the current Alpine stable patch release and official multiarch image digest in [versions/alpine.env](versions/alpine.env)
 
-Each stream uses its own pull-request branch (`automation/openldap-lts`, `automation/openldap-stable`, and `automation/alpine-stable`). A new feature release can therefore no longer overwrite an LTS update PR.
+Each stream uses its own pull-request branch (`automation/openldap-lts`, `automation/openldap-stable`, and `automation/alpine-stable`). OpenLDAP updates never rewrite this README: stable changes only its own manifest; LTS also synchronizes the default build arguments in `Dockerfile` and `examples/docker-compose.yml`. This keeps the two OpenLDAP PRs mergeable in either order. The linked manifests are the source of truth for current versions, checksums, and image revisions.
+
+After a pin change reaches `main` or `master`, the upstream check regenerates outstanding update PRs against that base. This also refreshes Alpine PRs, which intentionally touch both channel revisions and can overlap with OpenLDAP updates. The check can also be run manually to refresh an existing PR.
 
 Every pull request runs `.github/workflows/ci.yml`: it verifies the release/tag contract, builds both channels, checks their labels and modules, and performs an isolated LDAPI health smoke test. The contract test explicitly rejects `latest` in the stable channel.
 
@@ -176,10 +182,10 @@ Published tag policy:
 
 | Channel | Moving tags | Exact tag | Compatibility |
 |---|---|---|---|
-| OpenLDAP 2.6 LTS | `latest`, `lts`, `2.6`, `2.6-lts` | `2.6.14`, `2.6.14-r1` | Existing 2.6 MDB volumes remain on the LTS line |
-| OpenLDAP 2.7 feature/stable | `stable`, `2.7`, `2.7-stable` | `2.7.1`, `2.7.1-r1` | Requires the documented 2.6-to-2.7 MDB export/import |
+| OpenLDAP 2.6 LTS | `latest`, `lts`, `2.6`, `2.6-lts` | `<lts-version>`, `<lts-version>-r<revision>` | Existing 2.6 MDB volumes remain on the LTS line |
+| OpenLDAP 2.7 feature/stable | `stable`, `2.7`, `2.7-stable` | `<stable-version>`, `<stable-version>-r<revision>` | Requires the documented 2.6-to-2.7 MDB export/import |
 
-Both channels also publish an exact Alpine-qualified tag such as `2.6.14-alpine3.24.1`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
+Both channels also publish an exact Alpine-qualified tag of the form `<openldap-version>-alpine<alpine-version>`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
 
 SBOM is integrated in three places:
 
@@ -198,7 +204,7 @@ Recommended Docker Hub setup:
 - create a Docker Hub access token dedicated to CI
 - keep `latest` on the LTS channel
 - use `stable` for the current OpenLDAP feature release
-- repository release tags may use `v<openldap-version>-r<revision>`, for example `v2.6.14-r1` or `v2.7.1-r1`; the requested revision must match the pinned channel revision
+- repository release tags may use `v<openldap-version>-r<revision>`; the requested revision must match the pinned channel revision
 
 Local SBOM usage:
 
@@ -216,7 +222,8 @@ make sbom-registry IMAGE_NAME=<your-namespace>/openldap TAG=latest
 Suggested first publish:
 
 ```bash
-git tag v2.6.14-r1
+. versions/openldap-lts.env
+git tag "v${OPENLDAP_VERSION}-r${IMAGE_REVISION}"
 git push origin main --tags
 ```
 
@@ -513,6 +520,6 @@ make compose-down
 ## References
 
 - OpenLDAP Admin Guide: <https://www.openldap.org/doc/admin26/>
-- OpenLDAP 2.7 release source and upgrade guide: <https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.7.1.tgz>
+- OpenLDAP 2.7 release source and upgrade guide: <https://www.openldap.org/software/download/OpenLDAP/openldap-release/openldap-2.7.0.tgz>
 - OpenLDAP Downloads: <https://www.openldap.org/software/download/OpenLDAP/>
 - Alpine Wiki OpenLDAP: <https://wiki.alpinelinux.org/wiki/Configure_OpenLDAP>
