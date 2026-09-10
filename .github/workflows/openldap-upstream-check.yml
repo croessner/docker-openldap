@@ -4,6 +4,11 @@ on:
   schedule:
     - cron: "23 5 * * *"
   workflow_dispatch:
+  push:
+    branches: [main, master]
+    paths:
+      - versions/**
+      - .github/workflows/openldap-upstream-check.yml
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
@@ -141,35 +146,6 @@ jobs:
             new_revision="$(scripts/bump-image-revision.sh "$MANIFEST" bump)"
           fi
           echo "new_revision=${new_revision}" >> "$GITHUB_OUTPUT"
-          export NEW_REVISION="$new_revision"
-
-          # shellcheck disable=SC2016
-          ruby -e '
-            readme = File.read("README.md")
-            old_version = ENV.fetch("OLD_VERSION")
-            new_version = ENV.fetch("NEW_VERSION")
-            new_revision = ENV.fetch("NEW_REVISION")
-            channel = ENV.fetch("CHANNEL")
-            old_series = old_version.split(".")[0, 2].join(".")
-            new_series = new_version.split(".")[0, 2].join(".")
-
-            readme.gsub!(old_version, new_version)
-            readme.gsub!(ENV.fetch("OLD_SHA256"), ENV.fetch("NEW_SHA256"))
-            readme.gsub!(new_version + "-r" + ENV.fetch("OLD_REVISION"), new_version + "-r" + new_revision)
-
-            if old_series != new_series
-              readme.gsub!("CHANNEL=#{channel} TAG=#{old_series}-#{channel}", "CHANNEL=#{channel} TAG=#{new_series}-#{channel}")
-              if channel == "lts"
-                readme.gsub!("OpenLDAP #{old_series} LTS", "OpenLDAP #{new_series} LTS")
-                readme.gsub!("`#{old_series}`, `#{old_series}-lts`", "`#{new_series}`, `#{new_series}-lts`")
-              else
-                readme.gsub!("OpenLDAP #{old_series} feature/stable", "OpenLDAP #{new_series} feature/stable")
-                readme.gsub!("`#{old_series}`, `#{old_series}-stable`", "`#{new_series}`, `#{new_series}-stable`")
-              end
-            end
-
-            File.write("README.md", readme)
-          '
 
           if [ "$CHANNEL" = lts ]; then
             sed -i "s/^ARG OPENLDAP_VERSION=.*/ARG OPENLDAP_VERSION=${NEW_VERSION}/" Dockerfile
@@ -185,6 +161,10 @@ jobs:
         uses: peter-evans/create-pull-request@v8
         with:
           branch: ${{ matrix.branch }}
+          add-paths: |
+            ${{ matrix.manifest }}
+            ${{ matrix.channel == 'lts' && 'Dockerfile' || '' }}
+            ${{ matrix.channel == 'lts' && 'examples/docker-compose.yml' || '' }}
           delete-branch: true
           commit-message: ${{ steps.upstream.outputs.pr_title }}
           title: ${{ steps.upstream.outputs.pr_title }}
@@ -289,12 +269,7 @@ jobs:
 
           # shellcheck disable=SC1091
           source versions/openldap-lts.env
-          lts_version="$OPENLDAP_VERSION"
           old_lts_revision="$IMAGE_REVISION"
-          # shellcheck disable=SC1091
-          source versions/openldap-stable.env
-          stable_version="$OPENLDAP_VERSION"
-          old_stable_revision="$IMAGE_REVISION"
 
           sed -i "s/^ALPINE_VERSION=.*/ALPINE_VERSION=${NEW_VERSION}/" versions/alpine.env
           sed -i "s/^ALPINE_DIGEST=.*/ALPINE_DIGEST=${NEW_DIGEST}/" versions/alpine.env
@@ -314,24 +289,6 @@ jobs:
             echo "lts_revision=${lts_revision}"
             echo "stable_revision=${stable_revision}"
           } >> "$GITHUB_OUTPUT"
-
-          export LTS_VERSION="$lts_version"
-          export OLD_LTS_REVISION="$old_lts_revision"
-          export NEW_LTS_REVISION="$lts_revision"
-          export STABLE_VERSION="$stable_version"
-          export OLD_STABLE_REVISION="$old_stable_revision"
-          export NEW_STABLE_REVISION="$stable_revision"
-
-          # shellcheck disable=SC2016
-          ruby -e '
-            readme = File.read("README.md")
-            readme.gsub!("alpine:" + ENV.fetch("OLD_VERSION"), "alpine:" + ENV.fetch("NEW_VERSION"))
-            readme.gsub!("Alpine `" + ENV.fetch("OLD_VERSION") + "`", "Alpine `" + ENV.fetch("NEW_VERSION") + "`")
-            readme.gsub!(ENV.fetch("OLD_DIGEST"), ENV.fetch("NEW_DIGEST"))
-            readme.gsub!(ENV.fetch("LTS_VERSION") + "-r" + ENV.fetch("OLD_LTS_REVISION"), ENV.fetch("LTS_VERSION") + "-r" + ENV.fetch("NEW_LTS_REVISION"))
-            readme.gsub!(ENV.fetch("STABLE_VERSION") + "-r" + ENV.fetch("OLD_STABLE_REVISION"), ENV.fetch("STABLE_VERSION") + "-r" + ENV.fetch("NEW_STABLE_REVISION"))
-            File.write("README.md", readme)
-          '
 
       - name: Create or update Alpine pull request
         if: steps.upstream.outputs.update_needed == 'true'
