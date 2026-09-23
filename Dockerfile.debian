@@ -2,8 +2,8 @@
 ARG BUILDKIT_SBOM_SCAN_CONTEXT=true
 ARG BUILDKIT_SBOM_SCAN_STAGE=true
 
-ARG ALPINE_VERSION=3.24.2
-ARG ALPINE_DIGEST=sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
+ARG DEBIAN_VERSION=13.7
+ARG DEBIAN_DIGEST=sha256:a99cfc517144bc59b1978475ec53b46ecabec7e43635402ee5b77cc54cd1b20a
 ARG OPENLDAP_CHANNEL=lts
 ARG OPENLDAP_VERSION=2.6.15
 ARG OPENLDAP_SHA256=bc91225dbfc50354033b1303bc91d1a7f6ddd1dc32fac950d79c28fe66d6bca8
@@ -17,31 +17,38 @@ ARG OCI_LICENSES="MIT AND OLDAP-2.8"
 ARG OCI_VERSION="dev"
 ARG OCI_REVISION="unknown"
 
-FROM --platform=$TARGETPLATFORM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS builder
+# The Debian variant builds the same pinned OpenLDAP source with the same
+# configure flags as the Alpine image. It differs in the C library: glibc
+# instead of musl, with glibc's larger default thread stacks and its more
+# lenient allocator. It keeps the Alpine image's ldap UID and GID so both
+# variants can run on the same persistent data.
+FROM --platform=$TARGETPLATFORM debian:${DEBIAN_VERSION}-slim@${DEBIAN_DIGEST} AS builder
 
 ARG OPENLDAP_VERSION
 ARG OPENLDAP_SHA256
+ARG DEBIAN_FRONTEND=noninteractive
 
-LABEL org.opencontainers.image.title="OpenLDAP Alpine" \
-      org.opencontainers.image.description="OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support" \
+LABEL org.opencontainers.image.title="OpenLDAP Debian" \
+      org.opencontainers.image.description="OpenLDAP built from pinned source on Debian with env-driven bootstrap and optional persistent slapd.d support" \
       org.opencontainers.image.licenses="OLDAP-2.8"
 
-RUN apk upgrade --no-cache \
-    && apk add --no-cache \
-        argon2-dev \
-        build-base \
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
+        build-essential \
         ca-certificates \
         curl \
-        cyrus-sasl-dev \
-        groff \
-        libltdl \
+        groff-base \
+        libargon2-dev \
+        libltdl-dev \
+        libsasl2-dev \
+        libssl-dev \
         libtool \
-        openssl-dev \
-        tar \
-        util-linux-dev \
+        uuid-dev \
     && case "${OPENLDAP_VERSION}" in \
-         2.6.*) apk add --no-cache unixodbc-dev ;; \
-       esac
+         2.6.*) apt-get install -y --no-install-recommends unixodbc-dev ;; \
+       esac \
+    && rm -rf /var/lib/apt/lists/*
 
 WORKDIR /tmp/build
 
@@ -90,10 +97,10 @@ RUN set -- \
          ! -path '/tmp/build/src/servers/slapd/slapd.ldif' \
          -exec cp {} "${schema_dest}/" \;
 
-FROM --platform=$TARGETPLATFORM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}
+FROM --platform=$TARGETPLATFORM debian:${DEBIAN_VERSION}-slim@${DEBIAN_DIGEST}
 
-ARG ALPINE_VERSION
-ARG ALPINE_DIGEST
+ARG DEBIAN_VERSION
+ARG DEBIAN_DIGEST
 ARG OPENLDAP_VERSION
 ARG OPENLDAP_CHANNEL
 ARG IMAGE_REVISION
@@ -105,10 +112,11 @@ ARG OCI_AUTHORS
 ARG OCI_LICENSES
 ARG OCI_VERSION
 ARG OCI_REVISION
+ARG DEBIAN_FRONTEND=noninteractive
 
 LABEL maintainer="Christian Rößner <christian@roessner.email>" \
-      org.opencontainers.image.title="OpenLDAP Alpine" \
-      org.opencontainers.image.description="OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support" \
+      org.opencontainers.image.title="OpenLDAP Debian" \
+      org.opencontainers.image.description="OpenLDAP built from pinned source on Debian with env-driven bootstrap and optional persistent slapd.d support" \
       org.opencontainers.image.licenses="${OCI_LICENSES}" \
       org.opencontainers.image.vendor="${OCI_VENDOR}" \
       org.opencontainers.image.authors="${OCI_AUTHORS}" \
@@ -117,26 +125,34 @@ LABEL maintainer="Christian Rößner <christian@roessner.email>" \
       org.opencontainers.image.documentation="${OCI_DOCUMENTATION}" \
       org.opencontainers.image.version="${OCI_VERSION}" \
       org.opencontainers.image.revision="${OCI_REVISION}" \
-      org.opencontainers.image.base.name="docker.io/library/alpine:${ALPINE_VERSION}@${ALPINE_DIGEST}" \
+      org.opencontainers.image.base.name="docker.io/library/debian:${DEBIAN_VERSION}-slim@${DEBIAN_DIGEST}" \
       io.roessner.openldap.version="${OPENLDAP_VERSION}" \
       io.roessner.openldap.channel="${OPENLDAP_CHANNEL}" \
-      io.roessner.openldap.variant="alpine" \
+      io.roessner.openldap.variant="debian" \
       io.roessner.openldap.image-revision="${IMAGE_REVISION}"
 
-RUN apk upgrade --no-cache \
-    && apk add --no-cache \
-        argon2-libs \
+# gosu takes the same "user:group command" arguments as Alpine's su-exec, so the
+# shared entrypoint runs unchanged. UID 100 and GID 101 match the Alpine image.
+RUN apt-get update \
+    && apt-get upgrade -y \
+    && apt-get install -y --no-install-recommends \
         ca-certificates \
-        cyrus-sasl \
-        libltdl \
-        libuuid \
+        gosu \
+        libargon2-1 \
+        libltdl7 \
+        libsasl2-2 \
+        libsasl2-modules \
+        libuuid1 \
         openssl \
-        su-exec \
     && case "${OPENLDAP_VERSION}" in \
-         2.6.*) apk add --no-cache unixodbc ;; \
+         2.6.*) apt-get install -y --no-install-recommends libodbc2 ;; \
        esac \
-    && addgroup -S ldap \
-    && adduser -S -D -H -h /var/lib/openldap -s /sbin/nologin -G ldap ldap \
+    && rm -rf /var/lib/apt/lists/* \
+    && ln -s "$(command -v gosu)" /usr/local/bin/su-exec \
+    && groupadd --system --gid 101 ldap \
+    && useradd --system --uid 100 --gid 101 \
+         --home-dir /var/lib/openldap --no-create-home \
+         --shell /usr/sbin/nologin ldap \
     && mkdir -p \
         /docker-entrypoint-initdb.d \
         /etc/openldap/certs \

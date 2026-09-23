@@ -161,11 +161,11 @@ It also includes `.github/workflows/openldap-upstream-check.yml`, which runs dai
 - the current OpenLDAP Feature Release in [versions/openldap-stable.env](versions/openldap-stable.env)
 - the current Alpine stable patch release and official multiarch image digest in [versions/alpine.env](versions/alpine.env)
 
-Each stream uses its own pull-request branch (`automation/openldap-lts`, `automation/openldap-stable`, and `automation/alpine-stable`). OpenLDAP updates never rewrite this README: stable changes only its own manifest; LTS also synchronizes the default build arguments in `Dockerfile` and `examples/docker-compose.yml`. This keeps the two OpenLDAP PRs mergeable in either order. The linked manifests are the source of truth for current versions, checksums, and image revisions.
+Each stream uses its own pull-request branch (`automation/openldap-lts`, `automation/openldap-stable`, `automation/alpine-stable`, and `automation/debian-stable`). OpenLDAP updates never rewrite this README: stable changes only its own manifest; LTS also synchronizes the default build arguments in `Dockerfile`, `Dockerfile.debian`, and `examples/docker-compose.yml`. This keeps the two OpenLDAP PRs mergeable in either order. The linked manifests are the source of truth for current versions, checksums, and image revisions.
 
 After a pin change reaches `main` or `master`, the upstream check regenerates outstanding update PRs against that base. This also refreshes Alpine PRs, which intentionally touch both channel revisions and can overlap with OpenLDAP updates. The check can also be run manually to refresh an existing PR.
 
-Every pull request runs `.github/workflows/ci.yml`: it verifies the release/tag contract, builds both channels, checks their labels and modules, and performs an isolated LDAPI health smoke test. The contract test explicitly rejects `latest` in the stable channel.
+Every pull request runs `.github/workflows/ci.yml`: it verifies the release/tag contract, builds both channels in both variants (Alpine and Debian), checks their labels and modules, and performs an isolated LDAPI health smoke test. The contract test explicitly rejects `latest` in the stable channel.
 
 If you fork this repository, adjust the workflow image name and use your own Docker Hub namespace. The example push commands in this README intentionally use `<your-namespace>/openldap` for that reason.
 
@@ -186,6 +186,23 @@ Published tag policy:
 | OpenLDAP 2.7 feature/stable | `stable`, `2.7`, `2.7-stable` | `<stable-version>`, `<stable-version>-r<revision>` | Requires the documented 2.6-to-2.7 MDB export/import |
 
 Both channels also publish an exact Alpine-qualified tag of the form `<openldap-version>-alpine<alpine-version>`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
+
+### Debian variant
+
+Each channel is additionally published as a Debian-based image, built from the same pinned OpenLDAP source with the same configure flags and modules. It differs only in the C library: glibc instead of musl. Choose it when a workload is sensitive to musl's small default thread stacks or its strict allocator, for example under heavy concurrent load.
+
+| Channel | Moving tags | Exact tags |
+|---|---|---|
+| OpenLDAP 2.6 LTS | `lts-debian`, `2.6-debian`, `2.6-lts-debian` | `<lts-version>-debian`, `<lts-version>-r<revision>-debian`, `<lts-version>-debian<debian-version>` |
+| OpenLDAP 2.7 feature/stable | `stable-debian`, `2.7-debian`, `2.7-stable-debian` | `<stable-version>-debian`, `<stable-version>-r<revision>-debian`, `<stable-version>-debian<debian-version>` |
+
+- The Debian variant never publishes `latest`; `latest` stays the Alpine LTS image.
+- The `ldap` user keeps UID `100` and GID `101`, exactly as in the Alpine image, so both variants run on the same persistent volumes without an ownership change.
+- The entrypoint is shared. Debian has no `su-exec` package, so `su-exec` is a symlink to `gosu`, which takes the same `user:group command` arguments.
+- The base image is pinned in `versions/debian.env` (version and multiarch digest). The `-rX` revision is shared per channel with the Alpine image.
+- The daily upstream check tracks the Debian base like the Alpine one: a new point release or a replacement digest within the pinned major version opens an `automation/debian-stable` PR that pins the new base and increments both channel revisions. A new Debian major version is deliberately left to a manual change, because it changes package names.
+
+Build it locally with `make build VARIANT=debian` (optionally `CHANNEL=stable`).
 
 SBOM is integrated in three places:
 

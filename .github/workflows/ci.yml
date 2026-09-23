@@ -21,7 +21,7 @@ jobs:
         run: make check-release-contract
 
   build:
-    name: Build OpenLDAP ${{ matrix.channel }}
+    name: Build OpenLDAP ${{ matrix.channel }} (${{ matrix.variant }})
     runs-on: ubuntu-latest
     strategy:
       fail-fast: false
@@ -29,6 +29,9 @@ jobs:
         channel:
           - lts
           - stable
+        variant:
+          - alpine
+          - debian
 
     steps:
       - name: Check out repository
@@ -42,15 +45,26 @@ jobs:
         shell: bash
         env:
           CHANNEL: ${{ matrix.channel }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
 
           source versions/alpine.env
+          source versions/debian.env
           # shellcheck disable=SC1090
           source "versions/openldap-${CHANNEL}.env"
+          case "$VARIANT" in
+            alpine) dockerfile=Dockerfile; suffix="" ;;
+            debian) dockerfile=Dockerfile.debian; suffix="-debian" ;;
+            *) echo "unsupported image variant: $VARIANT" >&2; exit 1 ;;
+          esac
           {
+            echo "dockerfile=${dockerfile}"
+            echo "suffix=${suffix}"
             echo "alpine_version=${ALPINE_VERSION}"
             echo "alpine_digest=${ALPINE_DIGEST}"
+            echo "debian_version=${DEBIAN_VERSION}"
+            echo "debian_digest=${DEBIAN_DIGEST}"
             echo "openldap_channel=${OPENLDAP_CHANNEL}"
             echo "openldap_version=${OPENLDAP_VERSION}"
             echo "openldap_sha256=${OPENLDAP_SHA256}"
@@ -61,27 +75,29 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
+          file: ./${{ steps.versions.outputs.dockerfile }}
           load: true
           pull: true
-          tags: openldap-ci:${{ matrix.channel }}
+          tags: openldap-ci:${{ matrix.channel }}-${{ matrix.variant }}
           build-args: |
             ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
             ALPINE_DIGEST=${{ steps.versions.outputs.alpine_digest }}
+            DEBIAN_VERSION=${{ steps.versions.outputs.debian_version }}
+            DEBIAN_DIGEST=${{ steps.versions.outputs.debian_digest }}
             OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
             OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
             OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
             IMAGE_REVISION=${{ steps.versions.outputs.image_revision }}
-          cache-from: type=gha,scope=openldap-${{ matrix.channel }}
-          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
+          cache-from: type=gha,scope=openldap-${{ matrix.channel }}${{ steps.versions.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}${{ steps.versions.outputs.suffix }}
 
       - name: Verify labels and runtime contract
         shell: bash
         run: |
           set -euo pipefail
 
-          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.channel" }}')" = '${{ matrix.channel }}'
-          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.version" }}')" = '${{ steps.versions.outputs.openldap_version }}'
-          test "$(docker image inspect openldap-ci:${{ matrix.channel }} --format '{{ index .Config.Labels "io.roessner.openldap.image-revision" }}')" = '${{ steps.versions.outputs.image_revision }}'
-          docker run --rm --entrypoint slapd openldap-ci:${{ matrix.channel }} -VV
-          tests/smoke-image.sh openldap-ci:${{ matrix.channel }} '${{ matrix.channel }}'
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }}-${{ matrix.variant }} --format '{{ index .Config.Labels "io.roessner.openldap.channel" }}')" = '${{ matrix.channel }}'
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }}-${{ matrix.variant }} --format '{{ index .Config.Labels "io.roessner.openldap.version" }}')" = '${{ steps.versions.outputs.openldap_version }}'
+          test "$(docker image inspect openldap-ci:${{ matrix.channel }}-${{ matrix.variant }} --format '{{ index .Config.Labels "io.roessner.openldap.image-revision" }}')" = '${{ steps.versions.outputs.image_revision }}'
+          docker run --rm --entrypoint slapd openldap-ci:${{ matrix.channel }}-${{ matrix.variant }} -VV
+          tests/smoke-image.sh openldap-ci:${{ matrix.channel }}-${{ matrix.variant }} '${{ matrix.channel }}' '${{ matrix.variant }}'

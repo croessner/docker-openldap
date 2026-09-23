@@ -44,11 +44,12 @@ def update(channel, kind):
     if channel == 'lts':
         for key in ('OPENLDAP_VERSION', 'OPENLDAP_SHA256', 'IMAGE_REVISION'):
             assert f'ARG {key}={actual[key]}\n' in Path('Dockerfile').read_text()
+            assert f'ARG {key}={actual[key]}\n' in Path('Dockerfile.debian').read_text()
             assert '${' + key + ':-' + actual[key] + '}' in Path('examples/docker-compose.yml').read_text()
     changed = set(run('git', 'diff', '--name-only').splitlines())
     expected = {f'versions/openldap-{channel}.env'}
     if channel == 'lts':
-        expected |= {'Dockerfile', 'examples/docker-compose.yml'}
+        expected |= {'Dockerfile', 'Dockerfile.debian', 'examples/docker-compose.yml'}
     assert changed == expected, (changed, expected)
 
 
@@ -57,7 +58,7 @@ with tempfile.TemporaryDirectory(prefix='openldap-update-test-') as directory:
     repo.mkdir()
     for name in ('versions', 'scripts', 'examples'):
         shutil.copytree(ROOT / name, repo / name)
-    for name in ('README.md', 'Dockerfile'):
+    for name in ('README.md', 'Dockerfile', 'Dockerfile.debian'):
         shutil.copy2(ROOT / name, repo / name)
     os.chdir(repo)
     os.environ['GITHUB_OUTPUT'] = str(Path(directory) / 'outputs')
@@ -96,5 +97,33 @@ with tempfile.TemporaryDirectory(prefix='openldap-update-test-') as directory:
     for channel in before:
         assert int(pins(channel)['IMAGE_REVISION']) == int(before[channel]['IMAGE_REVISION']) + 1
         assert pins(channel)['OPENLDAP_VERSION'] == before[channel]['OPENLDAP_VERSION']
+    lts_revision = pins('lts')['IMAGE_REVISION']
+    for dockerfile in ('Dockerfile', 'Dockerfile.debian'):
+        assert f'ARG IMAGE_REVISION={lts_revision}\n' in Path(dockerfile).read_text(), dockerfile
     assert Path('README.md').read_bytes() == (ROOT / 'README.md').read_bytes()
-print('upstream update contract OK: version/checksum PRs merge in both orders; Alpine preserves both pins')
+
+    # Debian mirrors Alpine: new base, both revisions up, both Dockerfiles in step.
+    run('git', 'checkout', '-qfB', 'debian', base)
+    before = {channel: pins(channel) for channel in ('lts', 'stable')}
+    alpine_before = Path('versions/alpine.env').read_text()
+    env = dict(os.environ, NEW_VERSION='13.99', NEW_DIGEST='sha256:' + 'c' * 64)
+    run('bash', '-c', step('Update Debian pin'), env=env)
+    debian = dict(line.split('=', 1) for line in Path('versions/debian.env').read_text().splitlines())
+    assert debian == {'DEBIAN_VERSION': '13.99', 'DEBIAN_DIGEST': 'sha256:' + 'c' * 64}, debian
+    assert 'ARG DEBIAN_VERSION=13.99\n' in Path('Dockerfile.debian').read_text()
+    assert 'ARG DEBIAN_DIGEST=sha256:' + 'c' * 64 + '\n' in Path('Dockerfile.debian').read_text()
+    for channel in before:
+        assert int(pins(channel)['IMAGE_REVISION']) == int(before[channel]['IMAGE_REVISION']) + 1
+        assert pins(channel)['OPENLDAP_VERSION'] == before[channel]['OPENLDAP_VERSION']
+        assert pins(channel)['OPENLDAP_SHA256'] == before[channel]['OPENLDAP_SHA256']
+    lts_revision = pins('lts')['IMAGE_REVISION']
+    for dockerfile in ('Dockerfile', 'Dockerfile.debian'):
+        assert f'ARG IMAGE_REVISION={lts_revision}\n' in Path(dockerfile).read_text(), dockerfile
+    assert '${IMAGE_REVISION:-' + lts_revision + '}' in Path('examples/docker-compose.yml').read_text()
+    assert Path('versions/alpine.env').read_text() == alpine_before
+    assert Path('README.md').read_bytes() == (ROOT / 'README.md').read_bytes()
+    changed = set(run('git', 'diff', '--name-only').splitlines())
+    assert changed == {'versions/debian.env', 'versions/openldap-lts.env', 'versions/openldap-stable.env',
+                       'Dockerfile', 'Dockerfile.debian', 'examples/docker-compose.yml'}, changed
+print('upstream update contract OK: version/checksum PRs merge in both orders; '
+      'Alpine and Debian base updates keep both variants in step')
