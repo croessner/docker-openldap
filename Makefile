@@ -1,13 +1,27 @@
 IMAGE_NAME ?= openldap
 CHANNEL ?= lts
+# VARIANT selects the base distribution: alpine (default) or debian.
+VARIANT ?= alpine
 VERSION_FILE := versions/openldap-$(CHANNEL).env
 include versions/alpine.env
+include versions/debian.env
 include $(VERSION_FILE)
 
+ifeq ($(VARIANT),debian)
+DOCKERFILE := Dockerfile.debian
+TAG ?= $(CHANNEL)-debian
+else ifeq ($(VARIANT),alpine)
+DOCKERFILE := Dockerfile
 TAG ?= $(CHANNEL)
+else
+$(error unsupported VARIANT '$(VARIANT)'; use alpine or debian)
+endif
+
 BUILD_ARGS := \
 	--build-arg ALPINE_VERSION=$(ALPINE_VERSION) \
 	--build-arg ALPINE_DIGEST=$(ALPINE_DIGEST) \
+	--build-arg DEBIAN_VERSION=$(DEBIAN_VERSION) \
+	--build-arg DEBIAN_DIGEST=$(DEBIAN_DIGEST) \
 	--build-arg OPENLDAP_CHANNEL=$(OPENLDAP_CHANNEL) \
 	--build-arg OPENLDAP_VERSION=$(OPENLDAP_VERSION) \
 	--build-arg OPENLDAP_SHA256=$(OPENLDAP_SHA256) \
@@ -20,12 +34,13 @@ EXAMPLE_TLS_CA := $(EXAMPLE_CERT_DIR)/ca.crt
 .PHONY: build push sbom-local sbom-registry check-release-contract run compose-up compose-down compose-cert
 
 build:
-	docker build $(BUILD_ARGS) -t $(IMAGE_NAME):$(TAG) .
+	docker build -f $(DOCKERFILE) $(BUILD_ARGS) -t $(IMAGE_NAME):$(TAG) .
 
 push:
 	docker buildx build \
 	  --platform linux/amd64,linux/arm64 \
 	  --pull \
+	  -f $(DOCKERFILE) \
 	  $(BUILD_ARGS) \
 	  --attest type=provenance,mode=max \
 	  --attest type=sbom \
@@ -36,6 +51,7 @@ sbom-local:
 	rm -rf dist/sbom-local
 	docker buildx build \
 	  --sbom=true \
+	  -f $(DOCKERFILE) \
 	  $(BUILD_ARGS) \
 	  --output type=local,dest=dist/sbom-local .
 

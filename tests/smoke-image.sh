@@ -1,14 +1,25 @@
 #!/bin/sh
 set -eu
 
-if [ "$#" -ne 2 ]; then
-  echo "usage: $0 IMAGE CHANNEL" >&2
+if [ "$#" -lt 2 ] || [ "$#" -gt 3 ]; then
+  echo "usage: $0 IMAGE CHANNEL [alpine|debian]" >&2
   exit 2
 fi
 
 image="$1"
 channel="$2"
-container_name="openldap-${channel}-smoke-$$"
+variant="${3:-alpine}"
+container_name="openldap-${channel}-${variant}-smoke-$$"
+
+# The ODBC runtime that back_sql needs has a different package name per base.
+case "$variant" in
+  alpine) odbc_installed='apk info -e unixodbc >/dev/null 2>&1' ;;
+  debian) odbc_installed='dpkg -s libodbc2 >/dev/null 2>&1' ;;
+  *)
+    echo "unsupported image variant: $variant" >&2
+    exit 2
+    ;;
+esac
 
 cleanup() {
   docker rm -f "$container_name" >/dev/null 2>&1 || true
@@ -17,18 +28,18 @@ trap cleanup EXIT INT TERM
 
 case "$channel" in
   lts)
-    docker run --rm --entrypoint /bin/sh "$image" -ec '
-      apk info -e unixodbc >/dev/null
+    docker run --rm --entrypoint /bin/sh "$image" -ec "
+      ${odbc_installed}
       test -e /usr/lib/openldap/openldap/back_sql.so
       test ! -e /usr/lib/openldap/openldap/back_perl.so
-    '
+    "
     ;;
   stable)
-    docker run --rm --entrypoint /bin/sh "$image" -ec '
-      if apk info -e unixodbc >/dev/null 2>&1; then exit 1; fi
+    docker run --rm --entrypoint /bin/sh "$image" -ec "
+      if ${odbc_installed}; then exit 1; fi
       test ! -e /usr/lib/openldap/openldap/back_sql.so
       test ! -e /usr/lib/openldap/openldap/back_perl.so
-    '
+    "
     ;;
   *)
     echo "unsupported OpenLDAP channel: $channel" >&2

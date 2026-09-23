@@ -19,7 +19,7 @@ concurrency:
 
 jobs:
   docker:
-    name: Publish OpenLDAP ${{ matrix.channel }}
+    name: Publish OpenLDAP ${{ matrix.channel }} (${{ matrix.variant }})
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -29,6 +29,9 @@ jobs:
         channel:
           - lts
           - stable
+        variant:
+          - alpine
+          - debian
 
     steps:
       - name: Check out repository
@@ -51,13 +54,36 @@ jobs:
         shell: bash
         env:
           CHANNEL: ${{ matrix.channel }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
 
           source versions/alpine.env
+          source versions/debian.env
           # shellcheck disable=SC1090
           source "versions/openldap-${CHANNEL}.env"
           release_tag=""
+
+          case "$VARIANT" in
+            alpine)
+              dockerfile=Dockerfile
+              base_version="$ALPINE_VERSION"
+              title="OpenLDAP Alpine"
+              description="OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support"
+              suffix=""
+              ;;
+            debian)
+              dockerfile=Dockerfile.debian
+              base_version="$DEBIAN_VERSION"
+              title="OpenLDAP Debian"
+              description="OpenLDAP built from pinned source on Debian with env-driven bootstrap and optional persistent slapd.d support"
+              suffix="-debian"
+              ;;
+            *)
+              echo "unsupported image variant: $VARIANT" >&2
+              exit 1
+              ;;
+          esac
 
           if [ "${GITHUB_REF_TYPE}" = tag ]; then
             candidate="${GITHUB_REF_NAME#v}"
@@ -69,6 +95,13 @@ jobs:
           {
             echo "alpine_version=${ALPINE_VERSION}"
             echo "alpine_digest=${ALPINE_DIGEST}"
+            echo "debian_version=${DEBIAN_VERSION}"
+            echo "debian_digest=${DEBIAN_DIGEST}"
+            echo "dockerfile=${dockerfile}"
+            echo "base_version=${base_version}"
+            echo "title=${title}"
+            echo "description=${description}"
+            echo "suffix=${suffix}"
             echo "openldap_channel=${OPENLDAP_CHANNEL}"
             echo "openldap_version=${OPENLDAP_VERSION}"
             echo "openldap_sha256=${OPENLDAP_SHA256}"
@@ -81,21 +114,23 @@ jobs:
         shell: bash
         env:
           CHANNEL: ${{ matrix.channel }}
+          VARIANT: ${{ matrix.variant }}
           VERSION: ${{ steps.versions.outputs.openldap_version }}
           IMAGE_REVISION: ${{ steps.versions.outputs.image_revision }}
-          ALPINE_VERSION: ${{ steps.versions.outputs.alpine_version }}
+          BASE_VERSION: ${{ steps.versions.outputs.base_version }}
+          SUFFIX: ${{ steps.versions.outputs.suffix }}
           RELEASE_TAG: ${{ steps.versions.outputs.release_tag }}
         run: |
           set -euo pipefail
 
-          revision_ref="${IMAGE_NAME}:${VERSION}-r${IMAGE_REVISION}"
+          revision_ref="${IMAGE_NAME}:${VERSION}-r${IMAGE_REVISION}${SUFFIX}"
           tags="$(
-            scripts/docker-tags.sh \
+            VARIANT="$VARIANT" scripts/docker-tags.sh \
               "$IMAGE_NAME" \
               "$CHANNEL" \
               "$VERSION" \
               "$IMAGE_REVISION" \
-              "$ALPINE_VERSION" \
+              "$BASE_VERSION" \
               "$RELEASE_TAG"
           )"
 
@@ -116,13 +151,15 @@ jobs:
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
+          file: ./${{ steps.versions.outputs.dockerfile }}
           pull: true
           push: true
           platforms: linux/amd64,linux/arm64
           build-args: |
             ALPINE_VERSION=${{ steps.versions.outputs.alpine_version }}
             ALPINE_DIGEST=${{ steps.versions.outputs.alpine_digest }}
+            DEBIAN_VERSION=${{ steps.versions.outputs.debian_version }}
+            DEBIAN_DIGEST=${{ steps.versions.outputs.debian_digest }}
             OPENLDAP_CHANNEL=${{ steps.versions.outputs.openldap_channel }}
             OPENLDAP_VERSION=${{ steps.versions.outputs.openldap_version }}
             OPENLDAP_SHA256=${{ steps.versions.outputs.openldap_sha256 }}
@@ -134,8 +171,8 @@ jobs:
             OCI_REVISION=${{ github.sha }}
           tags: ${{ steps.docker_tags.outputs.tags }}
           labels: |
-            org.opencontainers.image.title=OpenLDAP Alpine
-            org.opencontainers.image.description=OpenLDAP built from pinned source on Alpine Linux with env-driven bootstrap and optional persistent slapd.d support
+            org.opencontainers.image.title=${{ steps.versions.outputs.title }}
+            org.opencontainers.image.description=${{ steps.versions.outputs.description }}
             org.opencontainers.image.licenses=MIT AND OLDAP-2.8
             org.opencontainers.image.vendor=Rößner-Network-Solutions
             org.opencontainers.image.authors=Christian Rößner <christian@roessner.email>
@@ -145,9 +182,10 @@ jobs:
             org.opencontainers.image.version=${{ steps.versions.outputs.openldap_version }}-r${{ steps.versions.outputs.image_revision }}
             org.opencontainers.image.revision=${{ github.sha }}
             io.roessner.openldap.channel=${{ steps.versions.outputs.openldap_channel }}
+            io.roessner.openldap.variant=${{ matrix.variant }}
             io.roessner.openldap.image-revision=${{ steps.versions.outputs.image_revision }}
-          cache-from: type=gha,scope=openldap-${{ matrix.channel }}
-          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}
+          cache-from: type=gha,scope=openldap-${{ matrix.channel }}${{ steps.versions.outputs.suffix }}
+          cache-to: type=gha,mode=max,scope=openldap-${{ matrix.channel }}${{ steps.versions.outputs.suffix }}
           attests: |
             type=provenance,mode=max
             type=sbom
@@ -156,6 +194,7 @@ jobs:
         shell: bash
         env:
           CHANNEL: ${{ matrix.channel }}
+          VARIANT: ${{ matrix.variant }}
         run: |
           set -euo pipefail
 
@@ -163,23 +202,23 @@ jobs:
           image_ref="${IMAGE_NAME}@${{ steps.build.outputs.digest }}"
           docker buildx imagetools inspect "$image_ref" \
             --format '{{ json (index .SBOM "linux/amd64").SPDX }}' \
-            > "dist/sbom/openldap-${CHANNEL}-linux-amd64.spdx.json"
+            > "dist/sbom/openldap-${CHANNEL}-${VARIANT}-linux-amd64.spdx.json"
           docker buildx imagetools inspect "$image_ref" \
             --format '{{ json (index .SBOM "linux/arm64").SPDX }}' \
-            > "dist/sbom/openldap-${CHANNEL}-linux-arm64.spdx.json"
+            > "dist/sbom/openldap-${CHANNEL}-${VARIANT}-linux-arm64.spdx.json"
 
       - name: Upload SBOM artifacts
         uses: actions/upload-artifact@v7
         with:
-          name: openldap-${{ matrix.channel }}-sbom-${{ github.run_id }}
+          name: openldap-${{ matrix.channel }}-${{ matrix.variant }}-sbom-${{ github.run_id }}
           path: dist/sbom/*.json
           if-no-files-found: error
 
       - name: Sync Docker Hub description
-        if: github.ref == 'refs/heads/main' && matrix.channel == 'lts'
+        if: github.ref == 'refs/heads/main' && matrix.channel == 'lts' && matrix.variant == 'alpine'
         uses: peter-evans/dockerhub-description@v5
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
           repository: chrroessner/openldap
-          short-description: OpenLDAP LTS and feature images on Alpine with env bootstrap and optional slapd.d mode.
+          short-description: OpenLDAP LTS and feature images on Alpine and Debian with env bootstrap and optional slapd.d mode.
