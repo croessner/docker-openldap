@@ -189,7 +189,7 @@ Both channels also publish an exact Alpine-qualified tag of the form `<openldap-
 
 ### Debian variant
 
-Each channel is additionally published as a Debian-based image, built from the same pinned OpenLDAP source with the same configure flags and modules. It differs only in the C library: glibc instead of musl. Choose it when a workload is sensitive to musl's small default thread stacks or its strict allocator, for example under heavy concurrent load.
+Each channel is additionally published as a Debian-based image, built from the same pinned OpenLDAP source with the same configure flags and modules. It differs only in the C library: glibc instead of musl. Choose it when a workload is sensitive to musl's allocator, for example under heavy concurrent load: musl's malloc serializes on one global lock and stops the process as soon as it detects heap corruption, where glibc may not notice it. Thread stacks are not a reason: slapd sets an explicit 8 MiB stack for its own threads on both variants.
 
 | Channel | Moving tags | Exact tags |
 |---|---|---|
