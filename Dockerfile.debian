@@ -19,9 +19,11 @@ ARG OCI_REVISION="unknown"
 
 # The Debian variant builds the same pinned OpenLDAP source with the same
 # configure flags as the Alpine image. It differs in the C library: glibc
-# instead of musl, with glibc's larger default thread stacks and its more
-# lenient allocator. It keeps the Alpine image's ldap UID and GID so both
-# variants can run on the same persistent data.
+# instead of musl, whose single-lock allocator aborts on heap corruption and
+# scales poorly under concurrent load. slapd sets an explicit stack size for
+# its own threads, so default thread stacks do not differ between variants.
+# It keeps the Alpine image's ldap UID and GID so both variants can run on the
+# same persistent data.
 FROM --platform=$TARGETPLATFORM debian:${DEBIAN_VERSION}-slim@${DEBIAN_DIGEST} AS builder
 
 ARG OPENLDAP_VERSION
