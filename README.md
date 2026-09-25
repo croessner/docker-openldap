@@ -187,6 +187,18 @@ Published tag policy:
 
 Both channels also publish an exact Alpine-qualified tag of the form `<openldap-version>-alpine<alpine-version>`. The `-rX` tag identifies the channel-specific image revision: OpenLDAP version changes reset it to `r1`, while an Alpine version/digest update or a refreshed OpenLDAP source checksum increments it. `latest` deliberately remains on LTS because an automatic move from 2.6 to 2.7 would make existing MDB volumes unusable until migrated.
 
+### Upstream patches
+
+Fixes that upstream has merged but not yet released live in `patches/<openldap-version>/` and are applied in name
+order with `patch -p1 --forward` right after the source checksum check, in both Dockerfiles. They apply only to that
+exact OpenLDAP version: a version bump skips them, so remove the directory once the release contains the fix, and a
+patch that stops applying to its version fails the build. Adding or changing a patch increments `IMAGE_REVISION` of the
+affected channel.
+
+| Version | Patch | Reason |
+| --- | --- | --- |
+| 2.6.15, 2.7.1 | `0001-ITS-10597-slapo-accesslog-per-op-state.patch` (upstream `1d1db8682`) | [ITS#10597](https://bugs.openldap.org/show_bug.cgi?id=10597): slapo-accesslog freed shared per-operation state without its mutex, so concurrent non-write operations such as binds and searches with `logops writes` and `logsuccess TRUE` could double-free and crash slapd. Affects 2.6.14, 2.6.15, 2.7.0 and 2.7.1; targeted for 2.6.16. |
+
 ### Debian variant
 
 Each channel is additionally published as a Debian-based image, built from the same pinned OpenLDAP source with the same configure flags and modules. It differs only in the C library: glibc instead of musl. Choose it when a workload is sensitive to musl's small default thread stacks or its strict allocator, for example under heavy concurrent load.

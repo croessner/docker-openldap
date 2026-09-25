@@ -7,7 +7,7 @@ ARG ALPINE_DIGEST=sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4ca
 ARG OPENLDAP_CHANNEL=lts
 ARG OPENLDAP_VERSION=2.6.15
 ARG OPENLDAP_SHA256=bc91225dbfc50354033b1303bc91d1a7f6ddd1dc32fac950d79c28fe66d6bca8
-ARG IMAGE_REVISION=2
+ARG IMAGE_REVISION=3
 ARG OCI_SOURCE="https://github.com/croessner/docker-openldap"
 ARG OCI_URL="https://hub.docker.com/r/chrroessner/openldap"
 ARG OCI_DOCUMENTATION="https://github.com/croessner/docker-openldap#readme"
@@ -37,6 +37,7 @@ RUN apk upgrade --no-cache \
         libltdl \
         libtool \
         openssl-dev \
+        patch \
         tar \
         util-linux-dev \
     && case "${OPENLDAP_VERSION}" in \
@@ -53,6 +54,18 @@ RUN curl -fsSLo openldap.tgz "https://www.openldap.org/software/download/OpenLDA
     && mv "openldap-${OPENLDAP_VERSION}" src
 
 WORKDIR /tmp/build/src
+
+# Upstream fixes that are not in a release yet live in patches/<version>/ and are
+# applied in name order to exactly that version. A patch that stops applying fails
+# the build; after a version bump remove the directory once the release has the fix.
+COPY patches/ /tmp/build/patches/
+
+RUN if [ -d "/tmp/build/patches/${OPENLDAP_VERSION}" ]; then \
+      for p in /tmp/build/patches/${OPENLDAP_VERSION}/*.patch; do \
+        echo "applying ${p##*/}"; \
+        patch -p1 --forward --batch < "$p"; \
+      done; \
+    fi
 
 RUN set -- \
         --prefix=/usr \
