@@ -4,11 +4,11 @@ services:
       context: ..
       args:
         ALPINE_VERSION: ${ALPINE_VERSION:-3.24.3}
-        ALPINE_DIGEST: ${ALPINE_DIGEST:-sha256:b3413572228e34bd1c9245f5565e6cd127005655e8a7899aef33d8e83255c9e6}
+        ALPINE_DIGEST: ${ALPINE_DIGEST:-sha256:be2656061b536c1883c4034790e21d0a09c5aaaf51968b89368a3c0371ea2c9a}
         OPENLDAP_CHANNEL: ${OPENLDAP_CHANNEL:-lts}
         OPENLDAP_VERSION: ${OPENLDAP_VERSION:-2.6.15}
         OPENLDAP_SHA256: ${OPENLDAP_SHA256:-bc91225dbfc50354033b1303bc91d1a7f6ddd1dc32fac950d79c28fe66d6bca8}
-        IMAGE_REVISION: ${IMAGE_REVISION:-5}
+        IMAGE_REVISION: ${IMAGE_REVISION:-6}
     image: ${IMAGE_NAME:-openldap}:${TAG:-latest}
     container_name: openldap
     restart: unless-stopped
