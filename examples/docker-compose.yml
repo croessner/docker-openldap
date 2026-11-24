@@ -8,7 +8,7 @@ services:
         OPENLDAP_CHANNEL: ${OPENLDAP_CHANNEL:-lts}
         OPENLDAP_VERSION: ${OPENLDAP_VERSION:-2.6.16}
         OPENLDAP_SHA256: ${OPENLDAP_SHA256:-8d8452bc3f56aa7a392c62dd377733f83d1314eed6c52fe44028439a3bb4df18}
-        IMAGE_REVISION: ${IMAGE_REVISION:-1}
+        IMAGE_REVISION: ${IMAGE_REVISION:-2}
     image: ${IMAGE_NAME:-openldap}:${TAG:-latest}
     container_name: openldap
     restart: unless-stopped
